@@ -1,9 +1,0 @@
-{
-  "appId": "app.lovable.8d21cf22b3c546cd84284693ecb9c4fc",
-  "appName": "ko-ko-seyali",
-  "webDir": "dist",
-  "server": {
-    "url": "https://8d21cf22-b3c5-46cd-8428-4693ecb9c4fc.lovableproject.com?forceHideBadge=true",
-    "cleartext": true
-  }
-}
