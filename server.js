@@ -20,7 +20,8 @@ connectDB();
 
 const app = express();
 
-app.use(cors({ origin: ["http://localhost:8080", "http://localhost:5173", "https://ko-ko-frontend.vercel.app"], credentials: false }));
+app.use(cors({ origin: ["http://localhost:8080", "http://localhost:5173", "https://ko-ko-frontend.vercel.app","https://localhost",
+      "capacitor://localhost"], credentials: false }));
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);

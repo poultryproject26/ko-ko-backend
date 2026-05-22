@@ -4,6 +4,8 @@ const notificationSchema = new mongoose.Schema({
   type: { type: String, enum: ["disease", "market", "tip"], required: true },
   message: { type: String, required: true },
   hamlet: { type: String },
+  shg_name: { type: String },
+  shg_names: [{ type: String }],
   createdAt: { type: Date, default: Date.now },
 });
 

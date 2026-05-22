@@ -38,4 +38,16 @@ router.delete("/:id/reject", verifyToken, async (req, res) => {
   }
 });
 
+// DELETE /api/farmers/:id — CRP deletes an existing farmer
+router.delete("/:id", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    const farmer = await User.findByIdAndDelete(req.params.id);
+    if (!farmer) return res.status(404).json({ message: "Farmer not found" });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

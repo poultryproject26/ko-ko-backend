@@ -4,10 +4,22 @@ import { verifyToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
-// GET /api/notifications — get all notifications (latest 20)
+// GET /api/notifications — get notifications filtered by farmer's hamlet and shg_name
 router.get("/", verifyToken, async (req, res) => {
   try {
-    const notifications = await Notification.find().sort({ createdAt: -1 }).limit(20);
+    let query = {};
+    if (req.user.role === "Farmer") {
+      query = {
+        $or: [
+          { hamlet: { $exists: false }, shg_name: { $exists: false }, shg_names: { $exists: false } },
+          { hamlet: null, shg_name: null },
+          { hamlet: req.user.hamlet },
+          { shg_name: req.user.shg_name },
+          { shg_names: req.user.shg_name },
+        ],
+      };
+    }
+    const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(20);
     res.json(notifications);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -18,10 +30,10 @@ router.get("/", verifyToken, async (req, res) => {
 router.post("/", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const { type, message, hamlet } = req.body;
+    const { type, message, hamlet, shg_name, shg_names } = req.body;
     if (!type || !message) return res.status(400).json({ message: "type and message are required" });
 
-    const notification = await Notification.create({ type, message, hamlet });
+    const notification = await Notification.create({ type, message, hamlet, shg_name, shg_names });
     res.status(201).json(notification);
   } catch (err) {
     res.status(500).json({ error: err.message });
