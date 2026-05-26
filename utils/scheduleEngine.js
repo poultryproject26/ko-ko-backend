@@ -9,7 +9,7 @@ const SCHEDULE = [
 
 const BOOSTER_INTERVAL_DAYS = 120; // 4 months
 
-export function generateSchedule(batchDate, boosterCount = 3) {
+export function generateSchedule(batchDate, boosterCount = 20) {
   const base = new Date(batchDate);
   base.setHours(0, 0, 0, 0);
 

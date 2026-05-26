@@ -8,7 +8,7 @@ const router = express.Router();
 router.get("/", verifyToken, async (req, res) => {
   try {
     let query = {};
-    if (req.user.role === "Farmer") {
+    if (req.user.role === "SHG Member") {
       query = {
         $or: [
           { hamlet: { $exists: false }, shg_name: { $exists: false }, shg_names: { $exists: false } },
@@ -19,7 +19,7 @@ router.get("/", verifyToken, async (req, res) => {
         ],
       };
     }
-    const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(20);
+    const notifications = await Notification.find(query).sort({ createdAt: -1 }).limit(50);
     res.json(notifications);
   } catch (err) {
     res.status(500).json({ error: err.message });
