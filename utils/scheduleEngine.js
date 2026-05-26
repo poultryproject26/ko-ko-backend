@@ -46,21 +46,23 @@ export function getNotificationMessages(event, daysUntil) {
     return [];
   }
 
+  // R2B: deworming happens 2 days before R2B date
   const dewormDate = new Date(event.scheduledDate);
-  dewormDate.setDate(dewormDate.getDate() - 1);
+  dewormDate.setDate(dewormDate.getDate() - 2);
   const dewormStr = formatDate(dewormDate);
 
   if (daysUntil === 3) {
     return [
-      `Vaccinate on ${dateStr}`,
-      `Prepare for deworming tomorrow (${dewormStr})`,
+      `Vaccinate on ${dateStr}. Prepare for deworming tomorrow (${dewormStr}).`,
     ];
   }
   if (daysUntil === 2) {
     return [
-      `Deworm today`,
-      `Prepare R2B vaccination for ${dateStr}`,
+      `Deworm tomorrow (${dewormStr}). Prepare for R2B vaccination on ${dateStr}.`,
     ];
+  }
+  if (daysUntil === 0) {
+    return [`Today is R2B vaccination day. Vaccinate on ${dateStr}.`];
   }
   return [];
 }
