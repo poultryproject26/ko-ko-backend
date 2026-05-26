@@ -14,14 +14,14 @@ import farmerRoutes from "./routes/farmers.js";
 import shgRoutes from "./routes/shg.js";
 import saleStockRoutes from "./routes/saleStocks.js";
 import activityRoutes from "./routes/activity.js";
+import { startNotificationScheduler } from "./utils/notificationScheduler.js";
 
 dotenv.config();
 connectDB();
 
 const app = express();
 
-app.use(cors({ origin: ["http://localhost:8080", "http://localhost:5173", "https://ko-ko-frontend.vercel.app","https://localhost",
-      "capacitor://localhost"], credentials: false }));
+app.use(cors({ origin: ["http://localhost:8080", "http://localhost:5173", "https://ko-ko-frontend.vercel.app", "https://localhost", "capacitor://localhost"], credentials: false }));
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
@@ -35,6 +35,8 @@ app.use("/api/farmers", farmerRoutes);
 app.use("/api/shg", shgRoutes);
 app.use("/api/sale-stocks", saleStockRoutes);
 app.use("/api/activity", activityRoutes);
+
+startNotificationScheduler();
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT} 🚀`));

@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 
 const notificationSchema = new mongoose.Schema({
-  type: { type: String, enum: ["disease", "market", "tip"], required: true },
+  type: { type: String, enum: ["disease", "market", "tip", "vaccination_reminder"], required: true },
   message: { type: String, required: true },
   hamlet: { type: String },
   shg_name: { type: String },
