@@ -13,6 +13,7 @@ function buildScheduleResult(schedule, dbRecords) {
     eDate.setHours(0, 0, 0, 0);
 
     const dbRecord = dbRecords.find((r) => {
+      if (!r.scheduledDate) return false;
       const rDate = new Date(r.scheduledDate);
       rDate.setHours(0, 0, 0, 0);
       return r.type === e.type && rDate.getTime() === eDate.getTime();
@@ -37,9 +38,9 @@ function buildScheduleResult(schedule, dbRecords) {
   });
 }
 
-// ── Batch management ─────────────────────────────────────────────────────────
+// ── Batch management ──────────────────────────────────────────────────────────
 
-// GET /api/vaccinations/batches/me — farmer sees own batches
+// GET /api/vaccinations/batches/me
 router.get("/batches/me", verifyToken, async (req, res) => {
   try {
     const batches = await BirdBatch.find({ userId: req.user.userId }).sort({ createdAt: -1 });
@@ -49,7 +50,7 @@ router.get("/batches/me", verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/vaccinations/batches/farmer/:farmerId — CRP sees a farmer's batches
+// GET /api/vaccinations/batches/farmer/:farmerId
 router.get("/batches/farmer/:farmerId", verifyToken, async (req, res) => {
   try {
     const batches = await BirdBatch.find({ userId: req.params.farmerId }).sort({ createdAt: -1 });
@@ -59,11 +60,13 @@ router.get("/batches/farmer/:farmerId", verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/vaccinations/batches/all — CRP sees all batches
+// GET /api/vaccinations/batches/all
 router.get("/batches/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const batches = await BirdBatch.find().populate("userId", "name phone hamlet shg_name").sort({ createdAt: -1 });
+    const batches = await BirdBatch.find()
+      .populate("userId", "name phone hamlet shg_name")
+      .sort({ createdAt: -1 });
     res.json(batches);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -75,17 +78,16 @@ router.post("/batches", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const { userId, batchName, numberOfChicks, batchDate } = req.body;
-    if (!userId || !batchName || !batchDate) return res.status(400).json({ message: "userId, batchName, batchDate required" });
+    if (!userId || !batchDate) return res.status(400).json({ message: "userId and batchDate required" });
 
     const batch = await BirdBatch.create({
       userId,
-      batchName,
+      batchName: batchName || "Batch 1",
       numberOfChicks: numberOfChicks || 0,
       activeBirdCount: numberOfChicks || 0,
       batchDate: new Date(batchDate),
     });
 
-    // Generate vaccination schedule for this batch
     const events = generateSchedule(batchDate);
     const records = events.map((e) => ({
       userId,
@@ -104,7 +106,7 @@ router.post("/batches", verifyToken, async (req, res) => {
   }
 });
 
-// PATCH /api/vaccinations/batches/:batchId/status — CRP marks batch inactive
+// PATCH /api/vaccinations/batches/:batchId/status
 router.patch("/batches/:batchId/status", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
@@ -122,7 +124,7 @@ router.patch("/batches/:batchId/status", verifyToken, async (req, res) => {
 
 // ── Schedule views ────────────────────────────────────────────────────────────
 
-// GET /api/vaccinations/schedule/me — farmer sees all their batches' schedules
+// GET /api/vaccinations/schedule/me — farmer sees all active batches + schedules
 router.get("/schedule/me", verifyToken, async (req, res) => {
   try {
     const batches = await BirdBatch.find({ userId: req.user.userId, batchStatus: "active" });
@@ -133,7 +135,7 @@ router.get("/schedule/me", verifyToken, async (req, res) => {
       const dbRecords = await Vaccination.find({ batchId: batch._id });
       return {
         batchId: batch._id,
-        batchName: batch.batchName,
+        batchName: batch.batchName || "Batch 1",
         numberOfChicks: batch.numberOfChicks,
         batchDate: batch.batchDate,
         schedule: buildScheduleResult(schedule, dbRecords),
@@ -157,7 +159,7 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
       const dbRecords = await Vaccination.find({ batchId: batch._id });
       return {
         batchId: batch._id,
-        batchName: batch.batchName,
+        batchName: batch.batchName || "Batch 1",
         numberOfChicks: batch.numberOfChicks,
         batchDate: batch.batchDate,
         batchStatus: batch.batchStatus,
@@ -180,7 +182,7 @@ router.patch("/:id/complete", verifyToken, async (req, res) => {
     const { notes } = req.body;
     const record = await Vaccination.findByIdAndUpdate(
       req.params.id,
-      { status: "completed", completedDate: new Date(), completedBy: req.user.userId, notes },
+      { status: "completed", completedDate: new Date(), completedBy: String(req.user.userId), notes },
       { new: true }
     );
     if (!record) return res.status(404).json({ message: "Not found" });
@@ -225,12 +227,13 @@ router.patch("/:id/reschedule", verifyToken, async (req, res) => {
   }
 });
 
-// ── Legacy / manual ───────────────────────────────────────────────────────────
+// ── Legacy ────────────────────────────────────────────────────────────────────
 
-// GET /api/vaccinations — farmer's own records
+// GET /api/vaccinations — farmer's own records (handles both old and new schema)
 router.get("/", verifyToken, async (req, res) => {
   try {
-    const records = await Vaccination.find({ userId: req.user.userId }).sort({ scheduledDate: 1 });
+    const records = await Vaccination.find({ userId: req.user.userId })
+      .sort({ scheduledDate: -1, dateGiven: -1 });
     res.json(records);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -244,7 +247,7 @@ router.get("/all", verifyToken, async (req, res) => {
     const records = await Vaccination.find()
       .populate("userId", "name phone hamlet")
       .populate("batchId", "batchName batchDate")
-      .sort({ scheduledDate: 1 });
+      .sort({ scheduledDate: -1 });
     res.json(records);
   } catch (err) {
     res.status(500).json({ error: err.message });
