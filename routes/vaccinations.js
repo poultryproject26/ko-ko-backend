@@ -95,14 +95,17 @@ router.post("/batches", verifyToken, async (req, res) => {
       type: e.type,
       label: e.label,
       scheduledDate: e.scheduledDate,
+      dateGiven: e.scheduledDate,   // keep legacy field populated
+      nextDueDate: e.scheduledDate, // keep legacy field populated
       status: "scheduled",
       isAutoScheduled: true,
     }));
-    await Vaccination.insertMany(records);
+    await Vaccination.insertMany(records, { ordered: false, rawResult: false });
 
     res.status(201).json({ batch, scheduleCount: records.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("POST /batches error:", err.message, err.errors);
+    res.status(500).json({ error: err.message, details: err.errors });
   }
 });
 
