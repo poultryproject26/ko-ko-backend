@@ -72,12 +72,15 @@ export async function sendPushNotification(tokens, notification, data = {}) {
     };
   }
 
+  const safeData = Object.fromEntries(
+    Object.entries({ ...data, click_action: "FLUTTER_NOTIFICATION_CLICK" })
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => [k, String(v)])
+  );
+
   const message = {
     notification,
-    data: {
-      ...data,
-      click_action: "FLUTTER_NOTIFICATION_CLICK",
-    },
+    data: safeData,
     tokens,
   };
 
