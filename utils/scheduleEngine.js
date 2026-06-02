@@ -37,34 +37,58 @@ export function generateSchedule(batchDate, boosterCount = 20) {
   return events;
 }
 
-export function getNotificationMessages(event, daysUntil) {
+export function getNotificationType(eventType, daysUntil) {
+  if (eventType === "R2B") {
+    if (daysUntil === 2) return "deworming_reminder";
+    return "r2b_reminder";
+  }
+  if (eventType === "R2B_booster") {
+    if (daysUntil === 2) return "deworming_reminder";
+    return "booster_reminder";
+  }
+  return "vaccination_reminder";
+}
+
+export function getNotificationTitle(eventType, daysUntil) {
+  const dateStr = formatDate(eventType === "R2B" || eventType === "R2B_booster" ? addDays(new Date(), 0) : new Date());
+
+  if (eventType === "R2B") return "R2B Vaccination Reminder";
+  if (eventType === "R2B_booster") return "Booster Vaccination Reminder";
+  if (eventType === "deworming") return "Deworming Reminder";
+  return "Vaccination Reminder";
+}
+
+export function getNotificationMessage(event, daysUntil) {
   const dateStr = formatDate(event.scheduledDate);
   const isR2B = event.type === "R2B" || event.type === "R2B_booster";
 
-  if (!isR2B) {
-    if (daysUntil === 3) return [`Prepare vaccine on ${dateStr}`];
-    return [];
-  }
+  if (event.type === "R2B" || event.type === "R2B_booster") {
+    const dewormDate = addDays(event.scheduledDate, -2);
+    const dewormStr = formatDate(dewormDate);
 
-  // R2B: deworming happens 2 days before R2B date
-  const dewormDate = new Date(event.scheduledDate);
-  dewormDate.setDate(dewormDate.getDate() - 2);
-  const dewormStr = formatDate(dewormDate);
+    if (daysUntil === 3) {
+      return `Vaccinate on ${dateStr}. Prepare for deworming on ${dewormStr}.`;
+    }
+    if (daysUntil === 2) {
+      return `Deworm on ${dewormStr} and prepare for vaccination on ${dateStr}.`;
+    }
+    if (daysUntil === 0) {
+      return `Today is vaccination day (${dateStr}). Please vaccinate the flock.`;
+    }
+    return "";
+  }
 
   if (daysUntil === 3) {
-    return [
-      `Vaccinate on ${dateStr}. Prepare for deworming tomorrow (${dewormStr}).`,
-    ];
+    return `Vaccination scheduled for ${dateStr}. Please prepare.`;
   }
-  if (daysUntil === 2) {
-    return [
-      `Deworm tomorrow (${dewormStr}). Prepare for R2B vaccination on ${dateStr}.`,
-    ];
-  }
-  if (daysUntil === 0) {
-    return [`Today is R2B vaccination day. Vaccinate on ${dateStr}.`];
-  }
-  return [];
+
+  return "";
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
 function formatDate(d) {

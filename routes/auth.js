@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 import Otp from "../models/Otp.js";
+import { notifyUsersByRole } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -67,7 +68,15 @@ router.post("/register", async (req, res) => {
     if (existing) return res.status(400).json({ message: "Phone already registered" });
 
     const user = await User.create({ phone, name, hamlet, street, houseNo, shg_name, role: "SHG Member", approved: false });
-    res.status(201).json({ success: true, user });
+
+    const crpIds = await notifyUsersByRole(["CRP"], {
+      type: "user_registration_pending",
+      title: "New farmer registration pending approval",
+      message: `${name} has registered and is awaiting approval.`,
+      payload: { userId: user._id.toString(), hamlet, shg_name },
+    });
+
+    res.status(201).json({ success: true, user, notificationsSent: crpIds.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

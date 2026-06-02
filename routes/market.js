@@ -1,6 +1,7 @@
 import express from "express";
 import MarketPrice from "../models/MarketPrice.js";
 import { verifyToken } from "../middleware/auth.js";
+import { notifyUsersByRole } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -29,6 +30,13 @@ router.post("/", verifyToken, async (req, res) => {
       chick,
       egg,
       updatedBy: req.user.userId,
+    });
+
+    await notifyUsersByRole(["SHG Member", "CRP"], {
+      type: "market",
+      title: "Market Price Update",
+      message: `Market prices updated: Broiler ₹${broiler}/kg, Chick ₹${chick}, Egg ₹${egg}.`,
+      payload: { broiler, chick, egg },
     });
 
     res.status(201).json(price);

@@ -1,6 +1,8 @@
 import express from "express";
 import DiseaseReport from "../models/DiseaseReport.js";
+import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
+import { notifyUsersByRole } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -14,6 +16,14 @@ router.post("/", verifyToken, async (req, res) => {
       userId: req.user.userId,
       description,
       photo: photo || null,
+    });
+
+    const farmer = await User.findById(req.user.userId);
+    await notifyUsersByRole(["CRP"], {
+      type: "disease",
+      title: "New Disease Report",
+      message: `${farmer?.name || "A farmer"} has submitted a disease report.`,
+      payload: { reportId: report._id.toString(), hamlet: farmer?.hamlet, shg_name: farmer?.shg_name },
     });
 
     res.status(201).json(report);

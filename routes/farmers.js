@@ -1,6 +1,7 @@
 import express from "express";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
+import { notifyUsers } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -21,6 +22,16 @@ router.patch("/:id/approve", verifyToken, async (req, res) => {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const farmer = await User.findByIdAndUpdate(req.params.id, { approved: true }, { new: true });
     if (!farmer) return res.status(404).json({ message: "Farmer not found" });
+
+    await notifyUsers([farmer._id.toString()], {
+      type: "user_approved",
+      title: "Account Approved",
+      message: "Your account has been approved. You can now log in.",
+      payload: { userId: farmer._id.toString() },
+      hamlet: farmer.hamlet,
+      shg_name: farmer.shg_name,
+    });
+
     res.json(farmer);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -31,7 +42,19 @@ router.patch("/:id/approve", verifyToken, async (req, res) => {
 router.delete("/:id/reject", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    await User.findByIdAndDelete(req.params.id);
+    const farmer = await User.findById(req.params.id);
+    if (!farmer) return res.status(404).json({ message: "Farmer not found" });
+
+    await notifyUsers([farmer._id.toString()], {
+      type: "user_rejected",
+      title: "Registration Rejected",
+      message: "Your registration has been rejected. Please contact your CRP for more details.",
+      payload: { userId: farmer._id.toString() },
+      hamlet: farmer.hamlet,
+      shg_name: farmer.shg_name,
+    });
+
+    await farmer.deleteOne();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

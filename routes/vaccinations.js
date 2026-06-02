@@ -1,8 +1,10 @@
 import express from "express";
 import Vaccination from "../models/Vaccination.js";
 import BirdBatch from "../models/BirdBatch.js";
+import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
 import { generateSchedule } from "../utils/scheduleEngine.js";
+import { notifyUsers, notifyUsersByRole, getUsersByRole } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -124,7 +126,21 @@ router.patch("/batches/:batchId/status", verifyToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// DELETE /api/vaccinations/batches/:batchId
+router.delete("/batches/:batchId", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    const batch = await BirdBatch.findById(req.params.batchId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
 
+    await Vaccination.deleteMany({ batchId: batch._id });
+    await batch.deleteOne();
+
+    res.json({ message: "Batch deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // ── Schedule views ────────────────────────────────────────────────────────────
 
 // GET /api/vaccinations/schedule/me — farmer sees all active batches + schedules
@@ -189,6 +205,17 @@ router.patch("/:id/complete", verifyToken, async (req, res) => {
       { new: true }
     );
     if (!record) return res.status(404).json({ message: "Not found" });
+
+    await notifyUsers([record.userId.toString(), ...await getUsersByRole(["CRP"])], {
+      batchId: record.batchId,
+      type: "vaccination_completed",
+      title: "Vaccination Completed",
+      message: `Vaccination ${record.type} has been marked completed.`,
+      hamlet: undefined,
+      shg_name: undefined,
+      payload: { vaccinationId: record._id.toString() },
+    });
+
     res.json(record);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -202,10 +229,24 @@ router.patch("/:id/missed", verifyToken, async (req, res) => {
     const { notes } = req.body;
     const record = await Vaccination.findByIdAndUpdate(
       req.params.id,
-      { status: "missed", notes },
+      {
+        status: "missed",
+        completedDate: new Date(),
+        completedBy: String(req.user.userId),
+        notes: notes || "missed",
+      },
       { new: true }
     );
     if (!record) return res.status(404).json({ message: "Not found" });
+
+    await notifyUsers(await getUsersByRole(["CRP"]), {
+      batchId: record.batchId,
+      type: "vaccination_missed",
+      title: "Vaccination Missed",
+      message: `Vaccination ${record.type} scheduled on ${record.scheduledDate?.toISOString().split("T")[0]} was marked missed.`,
+      payload: { vaccinationId: record._id.toString() },
+    });
+
     res.json(record);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -224,6 +265,15 @@ router.patch("/:id/reschedule", verifyToken, async (req, res) => {
       { new: true }
     );
     if (!record) return res.status(404).json({ message: "Not found" });
+
+    await notifyUsers([record.userId.toString(), ...await getUsersByRole(["CRP"])], {
+      batchId: record.batchId,
+      type: "vaccination_rescheduled",
+      title: "Vaccination Rescheduled",
+      message: `Vaccination ${record.type} has been rescheduled to ${new Date(rescheduledDate).toLocaleDateString()}.`,
+      payload: { vaccinationId: record._id.toString(), rescheduledDate },
+    });
+
     res.json(record);
   } catch (err) {
     res.status(500).json({ error: err.message });
