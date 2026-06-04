@@ -18,18 +18,35 @@ router.get("/", verifyToken, async (req, res) => {
     let query = {};
 
     if (req.user.role === "CRP") {
-      // CRP sees all notifications
       query = {};
     } else {
-      // Farmer sees only their own notifications (already created per user_id by notifyUsers)
-      query = { recipient_ids: req.user.userId };
+      const { read } = req.query;
+      if (read === "true") {
+        const since = new Date();
+        since.setDate(since.getDate() - 30);
+        query = { recipient_ids: req.user.userId, read_by: req.user.userId, created_at: { $gte: since } };
+      } else if (read === "false") {
+        query = { recipient_ids: req.user.userId, read_by: { $ne: req.user.userId } };
+      } else {
+        query = { recipient_ids: req.user.userId };
+      }
     }
 
-    const notifications = await Notification.find(query)
-      .sort({ created_at: -1 })
-      .limit(50);
-
+    const notifications = await Notification.find(query).sort({ created_at: -1 }).limit(50);
     res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/notifications/mark-all-read — mark all unread as read for current user
+router.patch("/mark-all-read", verifyToken, async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { recipient_ids: req.user.userId, read_by: { $ne: req.user.userId } },
+      { $addToSet: { read_by: req.user.userId } }
+    );
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
