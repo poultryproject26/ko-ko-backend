@@ -98,12 +98,9 @@ export async function broadcastNotification({
     payload,
   });
 
-  // collect all tokens for all recipients
-  const allTokens = [];
-  for (const id of recipientIds) {
-    const tokens = await getUserActiveTokens(id);
-    allTokens.push(...tokens);
-  }
+  // fetch all tokens in one query instead of looping
+  const objectIds = recipientIds.map(id => new mongoose.Types.ObjectId(id));
+  const allTokens = await DeviceToken.find({ userId: { $in: objectIds }, active: true }).distinct("token");
 
   if (!allTokens.length) return notification;
 
@@ -154,11 +151,8 @@ export async function retryFailedNotifications() {
   const results = [];
 
   for (const item of failed) {
-    const allTokens = [];
-    for (const id of item.recipient_ids || []) {
-      const tokens = await getUserActiveTokens(id);
-      allTokens.push(...tokens);
-    }
+    const objectIds = (item.recipient_ids || []).map(id => new mongoose.Types.ObjectId(id));
+    const allTokens = await DeviceToken.find({ userId: { $in: objectIds }, active: true }).distinct("token");
     if (!allTokens.length) continue;
 
     const response = await sendPushNotification(allTokens, { title: item.title, body: item.message }, {
