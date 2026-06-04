@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 
 const notificationSchema = new mongoose.Schema({
   notification_id: { type: String, default: () => new mongoose.Types.ObjectId().toString(), unique: true },
-  user_id: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  recipient_ids: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  read_by: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   batch_id: { type: mongoose.Schema.Types.ObjectId, ref: "BirdBatch" },
   type: {
     type: String,
@@ -38,7 +39,7 @@ const notificationSchema = new mongoose.Schema({
   sent_at: { type: Date },
   created_at: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now },
-  read_status: { type: String, enum: ["unread", "read"], default: "unread" },
+
   hamlet: { type: String },
   shg_name: { type: String },
   shg_names: [{ type: String }],

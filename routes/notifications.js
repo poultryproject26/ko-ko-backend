@@ -22,7 +22,7 @@ router.get("/", verifyToken, async (req, res) => {
       query = {};
     } else {
       // Farmer sees only their own notifications (already created per user_id by notifyUsers)
-      query = { user_id: req.user.userId };
+      query = { recipient_ids: req.user.userId };
     }
 
     const notifications = await Notification.find(query)

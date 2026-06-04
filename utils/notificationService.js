@@ -58,60 +58,15 @@ export async function getUserActiveTokens(userId) {
   return tokens;
 }
 
-export async function isDuplicateNotification(userId, type, title, message) {
+export async function isDuplicateNotification(type, title, message) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  const exists = await Notification.findOne({
-    user_id: userId,
-    type,
-    title,
-    message,
-    created_at: { $gte: today },
-  });
-
+  const exists = await Notification.findOne({ type, title, message, created_at: { $gte: today } });
   return Boolean(exists);
 }
 
-export async function createNotificationLog({
-  user_id,
-  batch_id,
-  type,
-  title,
-  message,
-  hamlet,
-  shg_name,
-  shg_names,
-  payload,
-  channel = "push",
-  status = "pending",
-  failure_reason,
-}) {
-  const notification = await Notification.create({
-    notification_id: new mongoose.Types.ObjectId().toString(),
-    user_id,
-    batch_id,
-    type,
-    title,
-    message,
-    channel,
-    status,
-    sent_at: status === "sent" ? new Date() : null,
-    created_at: new Date(),
-    createdAt: new Date(),
-    read_status: "unread",
-    hamlet,
-    shg_name,
-    shg_names,
-    failure_reason,
-    payload,
-  });
-
-  return notification;
-}
-
-export async function sendNotificationToUser({
-  userId,
+export async function broadcastNotification({
+  recipientIds,
   batchId,
   type,
   title,
@@ -121,40 +76,48 @@ export async function sendNotificationToUser({
   shg_names,
   payload,
 }) {
-  if (!userId) return null;
+  if (!recipientIds?.length) return null;
 
-  if (await isDuplicateNotification(userId, type, title, message)) {
-    return null;
-  }
+  if (await isDuplicateNotification(type, title, message)) return null;
 
-  const notification = await createNotificationLog({
-    user_id: userId,
+  const notification = await Notification.create({
+    notification_id: new mongoose.Types.ObjectId().toString(),
+    recipient_ids: recipientIds,
+    read_by: [],
     batch_id: batchId,
     type,
     title,
     message,
+    channel: "push",
+    status: "pending",
+    created_at: new Date(),
+    createdAt: new Date(),
     hamlet,
     shg_name,
     shg_names,
     payload,
   });
 
-  const tokens = await getUserActiveTokens(userId);
-  if (!tokens.length) {
-    notification.status = "pending";
-    await notification.save();
-    return notification;
+  // collect all tokens for all recipients
+  const allTokens = [];
+  for (const id of recipientIds) {
+    const tokens = await getUserActiveTokens(id);
+    allTokens.push(...tokens);
   }
 
-  const result = await sendPushNotification(tokens, { title, body: message }, {
+  if (!allTokens.length) return notification;
+
+  const result = await sendPushNotification(allTokens, { title, body: message }, {
     type,
     notification_id: notification.notification_id,
     batch_id: batchId?.toString?.(),
   });
 
-  notification.status = result.failureCount > 0 ? "failed" : "sent";
+  notification.status = result.failureCount > 0 && result.successCount === 0 ? "failed" : "sent";
   notification.sent_at = new Date();
-  notification.failure_reason = result.failureCount > 0 ? JSON.stringify(result.responses.map((r) => r.error?.message || "")) : undefined;
+  notification.failure_reason = result.failureCount > 0
+    ? JSON.stringify(result.responses.filter(r => !r.success).map(r => r.error?.message || ""))
+    : undefined;
   notification.payload = payload;
   await notification.save();
 
@@ -166,15 +129,10 @@ export async function sendNotificationToUser({
 }
 
 export async function notifyUsers(userIds, data) {
-  const results = [];
   const uniqueIds = [...new Set((userIds || []).filter(Boolean).map(String))];
-
-  for (const id of uniqueIds) {
-    const record = await sendNotificationToUser({ userId: id, ...data });
-    if (record) results.push(record);
-  }
-
-  return results;
+  if (!uniqueIds.length) return [];
+  const result = await broadcastNotification({ recipientIds: uniqueIds, ...data });
+  return result ? [result] : [];
 }
 
 export async function notifyUsersByRole(roles, data) {
@@ -184,39 +142,40 @@ export async function notifyUsersByRole(roles, data) {
 
 export async function markNotificationRead(notificationId, userId) {
   const notification = await Notification.findOneAndUpdate(
-    { notification_id: notificationId, user_id: userId },
-    { read_status: "read" },
+    { notification_id: notificationId, recipient_ids: userId },
+    { $addToSet: { read_by: userId } },
     { new: true }
   );
   return notification;
 }
 
 export async function retryFailedNotifications() {
-  const retryLimit = 50;
-  const failed = await Notification.find({ status: "failed" }).sort({ created_at: -1 }).limit(retryLimit);
+  const failed = await Notification.find({ status: "failed" }).sort({ created_at: -1 }).limit(50);
   const results = [];
 
   for (const item of failed) {
-    const tokens = await getUserActiveTokens(item.user_id);
-    if (!tokens.length) continue;
+    const allTokens = [];
+    for (const id of item.recipient_ids || []) {
+      const tokens = await getUserActiveTokens(id);
+      allTokens.push(...tokens);
+    }
+    if (!allTokens.length) continue;
 
-    const response = await sendPushNotification(tokens, { title: item.title, body: item.message }, {
+    const response = await sendPushNotification(allTokens, { title: item.title, body: item.message }, {
       type: item.type,
       notification_id: item.notification_id,
       batch_id: item.batch_id?.toString?.(),
     });
 
-    item.status = response.failureCount > 0 ? "failed" : "sent";
+    item.status = response.failureCount > 0 && response.successCount === 0 ? "failed" : "sent";
     item.sent_at = new Date();
-    item.failure_reason = response.failureCount > 0 ? JSON.stringify(response.responses.map((r) => r.error?.message || "")) : undefined;
+    item.failure_reason = response.failureCount > 0 ? JSON.stringify(response.responses.filter(r => !r.success).map(r => r.error?.message || "")) : undefined;
     await item.save();
 
     if (response.invalidTokens.length > 0) {
       await DeviceToken.updateMany({ token: { $in: response.invalidTokens } }, { active: false, updatedAt: new Date() });
     }
-
     results.push(item);
   }
-
   return results;
 }
