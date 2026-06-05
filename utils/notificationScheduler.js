@@ -2,7 +2,7 @@ import cron from "node-cron";
 import BirdBatch from "../models/BirdBatch.js";
 import Vaccination from "../models/Vaccination.js";
 import User from "../models/User.js";
-import { generateSchedule, getNotificationType, getNotificationMessage } from "./scheduleEngine.js";
+import { generateSchedule, getNotificationType, getFarmerMessage, getCrpMessage } from "./scheduleEngine.js";
 import { notifyUsers, notifyUsersByRole, retryFailedNotifications } from "./notificationService.js";
 
 function normalizeDate(date) {
@@ -33,8 +33,7 @@ async function runDailyCheck() {
         const eventDate = normalizeDate(event.scheduledDate);
         const diffDays = Math.round((eventDate - today) / 86400000);
         const notificationType = getNotificationType(event.type, diffDays);
-        const message = getNotificationMessage(event, diffDays);
-        if (!notificationType || !message) continue;
+        if (!notificationType) continue;
 
         const existed = await Vaccination.findOne({
           batchId: batch._id,
@@ -45,6 +44,10 @@ async function runDailyCheck() {
         if (existed) continue;
 
         const title = notificationType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+        const farmerMsg = getFarmerMessage(event, diffDays);
+        const crpMsg = getCrpMessage(event, diffDays, farmer);
+        if (!farmerMsg && !crpMsg) continue;
+
         const payload = {
           batchId: batch._id.toString(),
           vaccinationType: event.type,
@@ -52,18 +55,31 @@ async function runDailyCheck() {
           reminderType: notificationType,
         };
 
-        await notifyUsers(
-          [farmer._id.toString(), ...crpIds],
-          {
+        // Notify farmer
+        if (farmerMsg) {
+          await notifyUsers([farmer._id.toString()], {
             batchId: batch._id,
             type: notificationType,
             title,
-            message: `[${batch.batchName}] ${message}`,
+            message: `[${batch.batchName}] ${farmerMsg}`,
             hamlet: farmer.hamlet,
             shg_name: farmer.shg_name,
             payload,
-          }
-        );
+          });
+        }
+
+        // Notify CRP separately with CRP-specific message
+        if (crpMsg && crpIds.length) {
+          await notifyUsers(crpIds, {
+            batchId: batch._id,
+            type: notificationType,
+            title,
+            message: `[${batch.batchName}] ${crpMsg}`,
+            hamlet: farmer.hamlet,
+            shg_name: farmer.shg_name,
+            payload,
+          });
+        }
       }
     }
 
