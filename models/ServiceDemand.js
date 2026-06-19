@@ -9,6 +9,7 @@ const serviceDemandSchema = new mongoose.Schema({
     enum: ["Vaccination", "Deworming", "Feed Stock", "Loan", "Equipment"],
     required: true,
   },
+  option: { type: String },        // selected feed/equipment option
   quantity: { type: Number, required: true },
   amount: { type: Number },        // for Loan requests — amount in ₹
   notes: { type: String },         // purpose / extra details

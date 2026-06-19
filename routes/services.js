@@ -8,7 +8,7 @@ const router = express.Router();
 // POST /api/services — farmer requests a service
 router.post("/", verifyToken, async (req, res) => {
   try {
-    const { type, quantity, amount, notes } = req.body;
+    const { type, quantity, amount, notes, option } = req.body;
     if (!type || !quantity) return res.status(400).json({ message: "type and quantity are required" });
 
     const user = await User.findById(req.user.userId);
@@ -18,6 +18,7 @@ router.post("/", verifyToken, async (req, res) => {
       farmerName: user?.name || "",
       hamlet: user?.hamlet || "",
       type,
+      option: option || "",
       quantity,
       amount: amount || null,
       notes: notes || "",
