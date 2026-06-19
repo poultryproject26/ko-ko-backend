@@ -88,7 +88,7 @@ export function getCrpMessage(event, daysUntil, farmer) {
   if (isR2B) {
     const dewormDate = addDays(event.scheduledDate, -2);
     if (daysUntil === 3) {
-      return `Prepare for deworming on ${formatDate(dewormDate)} for ${farmer?.name || "farmer"} at ${address}`;
+      return `Prepare for deworming tomorrow on ${formatDate(dewormDate)} for ${farmer?.name || "farmer"} at ${address}`;
     }
     if (daysUntil === 2) {
       return `Prepare for R2B vaccination on ${formatDate(event.scheduledDate)} for ${farmer?.name || "farmer"} at ${address}`;

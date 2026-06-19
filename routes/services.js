@@ -44,7 +44,7 @@ router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const demands = await ServiceDemand.find()
-      .populate("userId", "name phone hamlet")
+      .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ createdAt: -1 });
     res.json(demands);
   } catch (err) {

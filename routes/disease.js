@@ -47,7 +47,7 @@ router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const reports = await DiseaseReport.find()
-      .populate("userId", "name phone hamlet")
+      .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ reportedAt: -1 });
     res.json(reports);
   } catch (err) {

@@ -8,7 +8,9 @@ const router = express.Router();
 // GET /api/sale-stocks — get all available stocks (public for buyers)
 router.get("/", async (req, res) => {
   try {
-    const stocks = await SaleStock.find().sort({ createdAt: -1 });
+    const stocks = await SaleStock.find()
+      .populate("userId", "name phone hamlet street houseNo shg_name")
+      .sort({ createdAt: -1 });
     res.json(stocks);
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -67,7 +67,7 @@ router.get("/batches/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const batches = await BirdBatch.find()
-      .populate("userId", "name phone hamlet shg_name")
+      .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ createdAt: -1 });
     res.json(batches);
   } catch (err) {
@@ -298,7 +298,7 @@ router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const records = await Vaccination.find()
-      .populate("userId", "name phone hamlet")
+      .populate("userId", "name phone hamlet street houseNo shg_name")
       .populate("batchId", "batchName batchDate")
       .sort({ scheduledDate: -1 });
     res.json(records);

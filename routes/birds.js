@@ -62,7 +62,7 @@ router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const updates = await BirdUpdate.find()
-      .populate("userId", "name phone hamlet shg_name role")
+      .populate("userId", "name phone hamlet street houseNo shg_name role")
       .sort({ createdAt: -1 });
     res.json(updates);
   } catch (err) {

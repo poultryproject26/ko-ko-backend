@@ -14,6 +14,7 @@ import farmerRoutes from "./routes/farmers.js";
 import shgRoutes from "./routes/shg.js";
 import saleStockRoutes from "./routes/saleStocks.js";
 import activityRoutes from "./routes/activity.js";
+import vaccinationStockRoutes from "./routes/vaccinationStock.js";
 import { startNotificationScheduler } from "./utils/notificationScheduler.js";
 
 dotenv.config();
@@ -35,6 +36,7 @@ app.use("/api/farmers", farmerRoutes);
 app.use("/api/shg", shgRoutes);
 app.use("/api/sale-stocks", saleStockRoutes);
 app.use("/api/activity", activityRoutes);
+app.use("/api/vaccination-stock", vaccinationStockRoutes);
 
 startNotificationScheduler();
 

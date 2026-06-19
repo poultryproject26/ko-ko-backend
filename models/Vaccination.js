@@ -5,7 +5,7 @@ const vaccinationSchema = new mongoose.Schema({
   batchId:      { type: mongoose.Schema.Types.ObjectId, ref: "BirdBatch" }, // optional — old records may not have this
   type: {
     type: String,
-    enum: ["F_vaccine", "IBD", "LaSota", "fowl_pox", "deworming", "R2B", "R2B_booster", "white_diarrhea", "smallpox"],
+    enum: ["F_vaccine", "IBD", "LaSota", "fowl_pox", "deworming", "R2B", "R2B_booster", "white_diarrhea", "smallpox", "multivitamin"],
     required: true,
   },
   label:           { type: String },
