@@ -2,6 +2,8 @@ import cron from "node-cron";
 import BirdBatch from "../models/BirdBatch.js";
 import Vaccination from "../models/Vaccination.js";
 import User from "../models/User.js";
+import VaccinationStock from "../models/VaccinationStock.js";
+import Notification from "../models/Notification.js";
 import { generateSchedule, getNotificationType, getFarmerMessage, getCrpMessage } from "./scheduleEngine.js";
 import { notifyUsers, notifyUsersByRole, retryFailedNotifications } from "./notificationService.js";
 
@@ -145,6 +147,89 @@ async function runDailyCheck() {
           payload: { pendingCount },
         }
       );
+    }
+
+    // Remind farmers to enter vaccination stock once in 2 weeks
+    const activeFarmers = await User.find({ role: "SHG Member", approved: true });
+    for (const farmer of activeFarmers) {
+      const latestStock = await VaccinationStock.findOne({ userId: farmer._id }).sort({ createdAt: -1 });
+      const fourteenDaysAgo = new Date();
+      fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+
+      if (!latestStock || latestStock.createdAt < fourteenDaysAgo) {
+        const recentReminder = await Notification.findOne({
+          type: "vaccination_stock_reminder",
+          recipient_ids: farmer._id,
+          created_at: { $gte: fourteenDaysAgo },
+        });
+        if (recentReminder) continue;
+
+        await notifyUsers([farmer._id.toString()], {
+          type: "vaccination_stock_reminder",
+          title: "Vaccination Stock Update",
+          message: "தயவுசெய்து உங்கள் தடுப்பூசி இருப்பு விவரங்களை சமர்ப்பிக்கவும் (2 வாரங்களுக்கு ஒருமுறை) / Please submit your vaccination stock update (once in 2 weeks)",
+          payload: { userId: farmer._id.toString() },
+        });
+      }
+    }
+
+    // Auto-progress vaccination stock categories every 14 days
+    const CATEGORY_ORDER = ["week0", "week2", "week4", "week6", "week8", "week10", "week12", "month4", "month5"];
+    const CATEGORY_LABELS = {
+      week0: "F Strain Vaccine", week2: "IBD Vaccine", week4: "LaSota Vaccine",
+      week6: "Fowl Pox Vaccine", week8: "Dewormer", week10: "R2B + Dewormer",
+      week12: "Multivitamins", month4: "Monitor (Booster Soon)", month5: "R2B Booster + Dewormer",
+    };
+    const CATEGORY_TAMIL = {
+      week0: "1 வார வயதுக்குள்", week2: "2-3 வார வயது", week4: "4-5 வார வயது",
+      week6: "6-7 வார வயது", week8: "8-9 வார வயது", week10: "10-11 வார வயது",
+      week12: "12-13 வார வயது", month4: "4 மாதங்கள் ஆனவை", month5: "5 மாதங்கள் ஆனவை",
+    };
+
+    const allStocks = await VaccinationStock.find().populate("userId");
+    for (const stock of allStocks) {
+      const lastProgressed = new Date(stock.lastProgressedAt || stock.entryDate);
+      const daysSince = Math.floor((today - lastProgressed) / 86400000);
+      if (daysSince < 14) continue;
+
+      // Shift each category to the next one
+      const updated = {};
+      for (let i = 0; i < CATEGORY_ORDER.length; i++) {
+        const current = CATEGORY_ORDER[i];
+        const next = CATEGORY_ORDER[i + 1];
+        updated[current] = next ? (stock[next] || 0) : 0;
+      }
+      // Last category (month5) birds have completed the cycle — set to 0
+      updated["month5"] = 0;
+      updated.lastProgressedAt = new Date();
+      updated.updatedAt = new Date();
+
+      await VaccinationStock.findByIdAndUpdate(stock._id, updated);
+
+      // Send notifications for each newly progressed category
+      const farmer = stock.userId;
+      if (!farmer) continue;
+      for (let i = 0; i < CATEGORY_ORDER.length - 1; i++) {
+        const nextCat = CATEGORY_ORDER[i];
+        const count = stock[CATEGORY_ORDER[i + 1]] || 0; // birds moving into nextCat
+        if (!count || nextCat === "month4") continue;
+        const label = CATEGORY_LABELS[nextCat];
+        const tamil = CATEGORY_TAMIL[nextCat];
+        await notifyUsers([farmer._id.toString()], {
+          type: "vaccination_reminder",
+          title: label,
+          message: `${count} birds are now due for ${label} (${tamil})`,
+          payload: { category: nextCat, count, vaccine: label },
+        });
+        if (crpIds.length) {
+          await notifyUsers(crpIds, {
+            type: "vaccination_reminder",
+            title: label,
+            message: `${farmer.name || "Farmer"}'s ${count} birds are now due for ${label} (${tamil})`,
+            payload: { category: nextCat, count, vaccine: label, farmerId: farmer._id.toString() },
+          });
+        }
+      }
     }
 
     await retryFailedNotifications();
