@@ -1,0 +1,4 @@
+node_modules/
+.env
+package-lock.json
+pultry-app-firebase-admin-sdk-fbsvc-8422d00949.json
