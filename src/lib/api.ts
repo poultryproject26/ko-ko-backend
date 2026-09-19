@@ -1,4 +1,4 @@
-const BASE = "https://ko-ko.onrender.com/api";
+const BASE = "https://ko-ko-backend.onrender.com/api";
 
 function getToken() {
   return localStorage.getItem("token") || "";
