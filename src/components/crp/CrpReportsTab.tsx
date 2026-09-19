@@ -9,11 +9,51 @@ import { Download, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import * as XLSX from "xlsx";
+import { Capacitor } from "@capacitor/core";
+import { Filesystem, Directory } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
+import { toast } from "sonner";
+
+// Android's WebView doesn't support the Blob + <a download> convention that
+// XLSX.writeFile()/pdf.save() rely on, so on native platforms we write the
+// generated file to the app cache and hand it to the OS share sheet instead.
+async function saveAndShareNative(base64Data: string, filename: string) {
+  let fileUri: string;
+  try {
+    const result = await Filesystem.writeFile({
+      path: filename,
+      data: base64Data,
+      directory: Directory.Cache,
+    });
+    fileUri = result.uri;
+  } catch (error) {
+    console.error("[Report] Unable to save report file:", error);
+    toast.error("Unable to save the report. Please try again.");
+    return;
+  }
+
+  try {
+    await Share.share({ title: filename, url: fileUri });
+  } catch (error: any) {
+    // User dismissing the share sheet rejects the promise with "Share canceled" — not an error.
+    if (error?.message !== "Share canceled") {
+      console.error("[Report] Unable to share report file:", error);
+      toast.error("Unable to share the report. Please try again.");
+    }
+  }
+}
 
 function downloadExcel(headers: string[], rows: (string | number)[][], filename: string) {
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Report");
+
+  if (Capacitor.isNativePlatform()) {
+    const base64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
+    void saveAndShareNative(base64, `${filename}.xlsx`);
+    return;
+  }
+
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
@@ -62,6 +102,13 @@ async function downloadPDF(title: string, headers: string[], rows: (string | num
   const imgData = canvas.toDataURL("image/png");
   const pdf = new jsPDF({ orientation: canvas.width > canvas.height ? "landscape" : "portrait", unit: "px", format: [canvas.width / 2, canvas.height / 2] });
   pdf.addImage(imgData, "PNG", 0, 0, canvas.width / 2, canvas.height / 2);
+
+  if (Capacitor.isNativePlatform()) {
+    const base64 = pdf.output("datauristring").split(",")[1] ?? "";
+    await saveAndShareNative(base64, `${filename}.pdf`);
+    return;
+  }
+
   pdf.save(`${filename}.pdf`);
 }
 
@@ -106,20 +153,19 @@ const CrpReportsTab = () => {
   const [farmers, setFarmers] = useState<any[]>([]);
   const [demands, setDemands] = useState<any[]>([]);
   const [diseaseReports, setDiseaseReports] = useState<any[]>([]);
-  const [vaccinations, setVaccinations] = useState<any[]>([]);
   const [birdUpdates, setBirdUpdates] = useState<any[]>([]);
   const [saleStocks, setSaleStocks] = useState<any[]>([]);
+  const [vaccinationStocks, setVaccinationStocks] = useState<any[]>([]);
 
   useEffect(() => {
     api.getFarmers().then(setFarmers).catch(() => {});
     api.getAllServiceDemands().then(setDemands).catch(() => {});
     api.getAllDiseaseReports().then(setDiseaseReports).catch(() => {});
-    api.getAllVaccinations().then(setVaccinations).catch(() => {});
     api.getAllBirdUpdates().then(setBirdUpdates).catch(() => {});
     api.getSaleStocks().then(setSaleStocks).catch(() => {});
+    api.getAllVaccinationStock().then(setVaccinationStocks).catch(() => {});
   }, []);
 
-  const today = new Date();
   const farmerName = (item: any) => item.userId?.name || item.farmerName || item.name || "-";
   const farmerPhone = (item: any) => item.userId?.phone || item.phone || "-";
   const farmerShg = (item: any) => item.userId?.shg_name || item.shg_name || "-";
@@ -157,31 +203,42 @@ const CrpReportsTab = () => {
   const diseaseHeadersEn = [...farmerInfoHeadersEn, "Date", "Description", "Status"];
   const diseaseHeaders = lang === "en" ? diseaseHeadersEn : diseaseHeadersTamil;
 
-  const overdueVax = vaccinations.filter((v) => v.type !== "deworming" && new Date(v.nextDueDate) < today);
-  const overdueDew = vaccinations.filter((v) => v.type === "deworming" && new Date(v.nextDueDate) < today);
-  const vacRows: (string | number)[][] = vaccinations.map((v) => [
-    ...farmerInfoCells(v),
-    v.type === "deworming"
-      ? (lang === "en" ? "Deworming" : "குடற்புழு நீக்கம்")
-      : v.type === "smallpox"
-      ? (lang === "en" ? "Smallpox" : "அம்மை தடுப்பூசி")
-      : (lang === "en" ? "Ranikhet (RD)" : "வெள்ளை கழிச்சல்"),
-    formatDate(v.dateGiven), formatDate(v.nextDueDate),
-    new Date(v.nextDueDate) < today
-      ? (lang === "en" ? "Overdue" : "காலாவதி")
-      : (lang === "en" ? "OK" : "சரி"),
-  ]);
-  const vacHeadersTamil = [...farmerInfoHeadersTamil, "வகை", "கடைசி தேதி", "அடுத்த தேதி", "நிலை"];
-  const vacHeadersEn = [...farmerInfoHeadersEn, "Type", "Last Date", "Next Date", "Status"];
-  const vacHeaders = lang === "en" ? vacHeadersEn : vacHeadersTamil;
-
   const weeklyRows: (string | number)[][] = birdUpdates.map((u) => [
-    ...farmerInfoCells(u), formatDate(u.weekDate), u.chicks, u.growers, u.layers, u.broilers,
-    u.chicks + u.growers + u.layers + u.broilers,
+    ...farmerInfoCells(u), formatDate(u.weekDate), u.chicks, u.layers,
+    u.chicks + u.layers,
   ]);
-  const weeklyHeadersTamil = [...farmerInfoHeadersTamil, "வாரம்", "குஞ்சு", "வளர்ச்சி", "முட்டை", "கறி", "மொத்தம்"];
-  const weeklyHeadersEn = [...farmerInfoHeadersEn, "Week", "Chick", "Growers", "Eggs", "Broilers", "Total"];
+  const weeklyHeadersTamil = [...farmerInfoHeadersTamil, "வாரம்", "3 மாதத்திற்குள்", "3 மாதத்திற்கு மேல்", "மொத்தம்"];
+  const weeklyHeadersEn = [...farmerInfoHeadersEn, "Week", "Within 3 Months", "Above 3 Months", "Total"];
   const weeklyHeaders = lang === "en" ? weeklyHeadersEn : weeklyHeadersTamil;
+
+  const vaccinationStockRows: (string | number)[][] = vaccinationStocks.map((s) => [
+    ...farmerInfoCells(s),
+    formatDate(s.updatedAt || s.entryDate),
+    s.withinMonth || 0,
+    s.month2 || 0,
+    s.month3 || 0,
+    s.month4Plus || 0,
+    (s.withinMonth || 0) + (s.month2 || 0) + (s.month3 || 0) + (s.month4Plus || 0),
+  ]);
+  const vaccinationStockHeadersTamil = [
+    ...farmerInfoHeadersTamil,
+    "தேதி",
+    "1 மாதத்திற்குள்",
+    "2 மாத வயது",
+    "3 மாத வயது",
+    "4 மாதங்கள் மற்றும் அதற்கு மேல்",
+    "மொத்தம்",
+  ];
+  const vaccinationStockHeadersEn = [
+    ...farmerInfoHeadersEn,
+    "Date",
+    "Within 1 Month",
+    "2 Months",
+    "3 Months",
+    "4 Months & Above",
+    "Total",
+  ];
+  const vaccinationStockHeaders = lang === "en" ? vaccinationStockHeadersEn : vaccinationStockHeadersTamil;
 
   const loans = demands.filter((d) => d.type === "Loan");
   const totalRequested = loans.reduce((s, d) => s + (d.amount || 0), 0);
@@ -227,12 +284,13 @@ const CrpReportsTab = () => {
 
       <Section title={lang === "en" ? "Requested Farmers List" : "கோரிக்கையாளர் பட்டியல்"} defaultOpen={false}
         onExcel={() => {
-          const listHeadersExcelTamil = ["வகை", "#", ...farmerInfoHeadersTamil, "தொகை/அளவு", "நிலை", "தேதி"];
-          const listHeadersExcelEn = ["Type", "#", ...farmerInfoHeadersEn, "Amount/Qty", "Status", "Date"];
+          const listHeadersExcelTamil = ["வகை", "#", ...farmerInfoHeadersTamil, "விருப்பம்/உபவகை", "தொகை/அளவு", "நிலை", "தேதி"];
+          const listHeadersExcelEn = ["Type", "#", ...farmerInfoHeadersEn, "Option", "Amount/Qty", "Status", "Date"];
           const listHeadersExcel = lang === "en" ? listHeadersExcelEn : listHeadersExcelTamil;
           const allRows: (string | number)[][] = demandTypes.flatMap((type) =>
             demands.filter((d) => d.type === type).map((d, i) => [
               type, i + 1, ...farmerInfoCells(d),
+              d.option || "-",
               d.type === "Loan" ? `₹${(d.amount || 0).toLocaleString()}` : (d.quantity || "-"),
               d.status, formatDate(d.createdAt),
             ])
@@ -240,14 +298,15 @@ const CrpReportsTab = () => {
           downloadExcel(listHeadersExcel, allRows, "demand_farmers_list");
         }}
         onPdf={async () => {
-          const listHeadersTamil = ["#", ...farmerInfoHeadersTamil, "தொகை/அளவு", "நிலை", "தேதி"];
-          const listHeadersEn = ["#", ...farmerInfoHeadersEn, "Amount/Qty", "Status", "Date"];
+          const listHeadersTamil = ["#", ...farmerInfoHeadersTamil, "விருப்பம்/உபவகை", "தொகை/அளவு", "நிலை", "தேதி"];
+          const listHeadersEn = ["#", ...farmerInfoHeadersEn, "Option", "Amount/Qty", "Status", "Date"];
           const listHeaders = lang === "en" ? listHeadersEn : listHeadersTamil;
           for (const type of demandTypes) {
             const list = demands.filter((d) => d.type === type);
             if (list.length === 0) continue;
             const rows = list.map((d, i) => [
               i + 1, ...farmerInfoCells(d),
+              d.option || "-",
               type === "Loan" ? `Rs.${(d.amount || 0).toLocaleString()}` : (d.quantity || "-"),
               d.status, formatDate(d.createdAt),
             ]);
@@ -277,6 +336,7 @@ const CrpReportsTab = () => {
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "SHG Name" : "SHG பெயர்"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Address" : "முகவரி"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Contact No" : "தொடர்பு எண்"}</th>
+                      <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Option" : "விருப்பம்/உபவகை"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Amount/Qty" : "தொகை/அளவு"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Status" : "நிலை"}</th>
                     </tr></thead>
@@ -288,6 +348,7 @@ const CrpReportsTab = () => {
                           <td className="py-1.5 px-1 text-foreground">{farmerShg(d)}</td>
                           <td className="py-1.5 px-1 text-foreground">{farmerAddress(d)}</td>
                           <td className="py-1.5 px-1 text-foreground">{farmerPhone(d)}</td>
+                          <td className="py-1.5 px-1 text-foreground">{d.option || "-"}</td>
                           <td className="py-1.5 px-1 text-foreground">{type === "Loan" ? `₹${(d.amount || 0).toLocaleString()}` : (d.quantity || "-")}</td>
                           <td className="py-1.5 px-1">
                             <span className={`font-semibold ${
@@ -324,30 +385,28 @@ const CrpReportsTab = () => {
         </div>
       </Section>
 
-      <Section title={t("vaccinationStatusReport")} count={overdueVax.length + overdueDew.length} defaultOpen={false}
-        onExcel={() => downloadExcel(vacHeaders, vacRows, "vaccination_status")}
-        onPdf={() => downloadPDF(t("vaccinationStatusReport"), vacHeaders, vacRows, "vaccination_status")}>
-        <div className="grid grid-cols-2 gap-2 mb-3">
-          <div className="bg-danger/10 rounded-lg p-3 text-center">
-            <p className="text-2xl font-bold text-danger">{overdueVax.length}</p>
-            <p className="text-xs text-muted-foreground">{lang === "en" ? "Vaccination Overdue" : "தடுப்பூசி காலாவதி"}</p>
-          </div>
-          <div className="bg-warning/10 rounded-lg p-3 text-center">
-            <p className="text-2xl font-bold text-warning">{overdueDew.length}</p>
-            <p className="text-xs text-muted-foreground">{lang === "en" ? "Deworming Overdue" : "குடற்புழு காலாவதி"}</p>
-          </div>
-        </div>
-      </Section>
-
       <Section title={t("weeklyHistoryReport")} defaultOpen={false}
         onExcel={() => downloadExcel(weeklyHeaders, weeklyRows, "weekly_history")}
         onPdf={() => downloadPDF(t("weeklyHistoryReport"), weeklyHeaders, weeklyRows, "weekly_history")}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="border-b border-border">{weeklyHeaders.map((h) => <th key={h} className="text-left py-2 px-1 text-muted-foreground font-medium">{h}</th>)}</tr></thead>
-            <tbody>{weeklyRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 9 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
+            <tbody>{weeklyRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 7 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
           </table>
         </div>
+      </Section>
+
+      <Section title={lang === "en" ? "Vaccination Stock Report" : "தடுப்பூசி இருப்பு அறிக்கை"} count={vaccinationStocks.length} defaultOpen={false}
+        onExcel={() => downloadExcel(vaccinationStockHeaders, vaccinationStockRows, "vaccination_stock")}
+        onPdf={() => downloadPDF(lang === "en" ? "Vaccination Stock Report" : "தடுப்பூசி இருப்பு அறிக்கை", vaccinationStockHeaders, vaccinationStockRows, "vaccination_stock")}>
+        {vaccinationStocks.length === 0 ? <p className="text-sm text-muted-foreground">{t("noDataFound")}</p> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="border-b border-border">{vaccinationStockHeaders.map((h) => <th key={h} className="text-left py-2 px-1 text-muted-foreground font-medium">{h}</th>)}</tr></thead>
+              <tbody>{vaccinationStockRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 9 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
+            </table>
+          </div>
+        )}
       </Section>
 
       <Section title={t("loanSummaryReport")} count={loans.length} defaultOpen={false}
