@@ -6,7 +6,7 @@ import Otp from "../models/Otp.js";
 import Hamlet from "../models/Hamlet.js";
 import Street from "../models/Street.js";
 import { notifyUsersByRole } from "../utils/notificationService.js";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, requireAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -48,7 +48,8 @@ router.post("/login", async (req, res) => {
 
     const token = jwt.sign(
       { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
-      process.env.JWT_SECRET
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
     res.json({ token, user });
@@ -96,7 +97,8 @@ router.post("/verify-otp", async (req, res) => {
 
     const token = jwt.sign(
       { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
-      process.env.JWT_SECRET
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
     res.json({ token, user });
@@ -181,8 +183,10 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// POST /api/auth/seed-crp
-router.post("/seed-crp", async (req, res) => {
+// POST /api/auth/seed-crp — Admin-only (was previously reachable by anyone who
+// knew SEED_SECRET; verifyToken/requireAdmin now gate it first, and the
+// SEED_SECRET check is kept as a second, independent check on top).
+router.post("/seed-crp", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { phone, name, role, hamlet, secret } = req.body;
     if (secret !== process.env.SEED_SECRET) return res.status(403).json({ message: "Forbidden" });

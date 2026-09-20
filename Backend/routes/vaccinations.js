@@ -141,6 +141,54 @@ router.delete("/batches/:batchId", verifyToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// PATCH /api/vaccinations/batches/:batchId/mortality — record newly-dead birds
+// for a batch. `count` is an INCREMENT (deaths since the last update, not a
+// running total) — each call adds to mortalityCount and subtracts the same
+// amount from activeBirdCount, so re-submitting never double-counts a death
+// already recorded. The batch's own farmer or their assigned CRP may call
+// this; nothing else in the app currently manages an individual batch's data,
+// so this mirrors that same two-party access pattern rather than introducing
+// a new one.
+router.patch("/batches/:batchId/mortality", verifyToken, async (req, res) => {
+  try {
+    const delta = Number(req.body.count);
+    if (!Number.isInteger(delta) || delta <= 0) {
+      return res.status(400).json({ message: "count must be a positive whole number" });
+    }
+
+    const batch = await BirdBatch.findById(req.params.batchId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+
+    const role = String(req.user.role || "").toUpperCase();
+    if (role === "CRP") {
+      const [crpUser, farmer] = await Promise.all([
+        User.findById(req.user.userId, "crpProfileId"),
+        User.findById(batch.userId, "crpId"),
+      ]);
+      const isAssigned = crpUser?.crpProfileId && farmer?.crpId
+        && String(farmer.crpId) === String(crpUser.crpProfileId);
+      if (!isAssigned) return res.status(403).json({ message: "Forbidden" });
+    } else if (String(batch.userId) !== String(req.user.userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (delta > batch.activeBirdCount) {
+      return res.status(400).json({
+        message: `Cannot record ${delta} deaths — only ${batch.activeBirdCount} active birds remain in this batch`,
+      });
+    }
+
+    batch.mortalityCount = (batch.mortalityCount || 0) + delta;
+    batch.activeBirdCount -= delta;
+    batch.updatedAt = new Date();
+    await batch.save();
+
+    res.json(batch);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // ── Schedule views ────────────────────────────────────────────────────────────
 
 // GET /api/vaccinations/schedule/me — farmer sees all active batches + schedules
@@ -180,6 +228,8 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
         batchId: batch._id,
         batchName: batch.batchName || "Batch 1",
         numberOfChicks: batch.numberOfChicks,
+        activeBirdCount: batch.activeBirdCount,
+        mortalityCount: batch.mortalityCount,
         batchDate: batch.batchDate,
         batchStatus: batch.batchStatus,
         schedule: buildScheduleResult(schedule, dbRecords),

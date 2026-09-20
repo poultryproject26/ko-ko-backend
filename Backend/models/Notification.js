@@ -33,6 +33,7 @@ const notificationSchema = new mongoose.Schema({
       "vaccination_stock_reminder",
       "vaccination_stock_monthly_reminder",
       "weekly_stock_reminder",
+      "admin_announcement",
     ],
     required: true,
   },

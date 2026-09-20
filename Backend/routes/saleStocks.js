@@ -38,14 +38,37 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-// PATCH /api/sale-stocks/:id/sold — mark as sold
+// PATCH /api/sale-stocks/:id/sold — mark as sold. A Farmer may only mark
+// their own stock; a CRP only stock belonging to a farmer assigned to them
+// (same crpProfileId/crpId check used to scope GET /farmers for a CRP);
+// an Admin may mark any record, matching the existing Admin permissions model.
 router.patch("/:id/sold", verifyToken, async (req, res) => {
   try {
-    const stock = await SaleStock.findByIdAndUpdate(
-      req.params.id,
-      { status: "sold", soldAt: new Date() },
-      { new: true }
-    );
+    const stock = await SaleStock.findById(req.params.id);
+    if (!stock) return res.status(404).json({ message: "Sale stock not found" });
+
+    const role = String(req.user.role || "").toUpperCase();
+
+    if (role === "ADMIN") {
+      // Admin: no additional ownership check, consistent with other admin routes.
+    } else if (role === "CRP") {
+      const [crpUser, farmer] = await Promise.all([
+        User.findById(req.user.userId, "crpProfileId"),
+        User.findById(stock.userId, "crpId"),
+      ]);
+      const isAssigned = crpUser?.crpProfileId && farmer?.crpId
+        && String(farmer.crpId) === String(crpUser.crpProfileId);
+      if (!isAssigned) return res.status(403).json({ message: "Forbidden" });
+    } else {
+      // Farmer (or any other authenticated role): only their own record.
+      if (String(stock.userId) !== String(req.user.userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+    }
+
+    stock.status = "sold";
+    stock.soldAt = new Date();
+    await stock.save();
     res.json(stock);
   } catch (err) {
     res.status(500).json({ error: err.message });
