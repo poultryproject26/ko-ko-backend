@@ -3,6 +3,7 @@ import VaccinationStock from "../models/VaccinationStock.js";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
 import { notifyUsers, getUsersByRole } from "../utils/notificationService.js";
+import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ function addDays(date, days) {
 router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const stocks = await VaccinationStock.find()
+    const stocks = await VaccinationStock.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ updatedAt: -1 });
     res.json(stocks);
@@ -131,6 +132,10 @@ router.post("/", verifyToken, async (req, res) => {
 router.patch("/:id/complete", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+
+    const existing = await VaccinationStock.findById(req.params.id, "userId");
+    if (!existing) return res.status(404).json({ message: "Not found" });
+    if (!(await canAccessFarmer(req, existing.userId))) return res.status(403).json({ message: "Forbidden" });
 
     const stock = await VaccinationStock.findByIdAndUpdate(
       req.params.id,

@@ -26,6 +26,13 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
 
     if (await Crp.findOne({ phone })) return res.status(400).json({ message: "CRP with this phone already exists" });
 
+    // A new CRP login account needs an explicit password — there is no default.
+    // Checked before anything is written so a failed request leaves no partial CRP.
+    const needsLoginAccount = !(await User.findOne({ phone }));
+    if (needsLoginAccount && (typeof password !== "string" || !password.trim())) {
+      return res.status(400).json({ message: "password is required" });
+    }
+
     const crp = await Crp.create({
       name,
       phone,
@@ -41,8 +48,8 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
       }
     }
 
-    if (!(await User.findOne({ phone }))) {
-      const hashed = await bcrypt.hash(password || "changeme123", 10);
+    if (needsLoginAccount) {
+      const hashed = await bcrypt.hash(password, 10);
       await User.create({ name, phone, password: hashed, role: "CRP", crpProfileId: crp._id, approved: true });
     }
 

@@ -1,14 +1,17 @@
 import express from "express";
 import SaleStock from "../models/SaleStock.js";
 import User from "../models/User.js";
-import { verifyToken } from "../middleware/auth.js";
+import { verifyToken, requireCrpOrAdmin } from "../middleware/auth.js";
+import { crpRecordFilter } from "../utils/crpScope.js";
 
 const router = express.Router();
 
-// GET /api/sale-stocks — get all available stocks (public for buyers)
-router.get("/", async (req, res) => {
+// GET /api/sale-stocks — all sale stock with farmer contact details. Restricted
+// to CRP/Admin: the response includes farmers' names, phones and addresses, and
+// its only callers are the CRP Stock and CRP Reports screens.
+router.get("/", verifyToken, requireCrpOrAdmin, async (req, res) => {
   try {
-    const stocks = await SaleStock.find()
+    const stocks = await SaleStock.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ createdAt: -1 });
     res.json(stocks);

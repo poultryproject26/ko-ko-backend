@@ -5,10 +5,29 @@ import User from "../models/User.js";
 import Otp from "../models/Otp.js";
 import Hamlet from "../models/Hamlet.js";
 import Street from "../models/Street.js";
+import Crp from "../models/Crp.js";
 import { notifyUsersByRole } from "../utils/notificationService.js";
 import { verifyToken, requireAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
+
+// User documents carry the bcrypt password hash for ADMIN/CRP accounts; never
+// send it to the client (it ends up persisted in the app's localStorage).
+function toSafeUser(user) {
+  const obj = user.toObject();
+  delete obj.password;
+  return obj;
+}
+
+// A CRP whose Crp profile an Admin set to "Inactive" must not be able to sign
+// in. Legacy CRP users without a crpProfileId have no status and are allowed.
+async function isInactiveCrp(user) {
+  if (String(user.role || "").toUpperCase() !== "CRP" || !user.crpProfileId) return false;
+  const crp = user.crpProfileId.status !== undefined
+    ? user.crpProfileId
+    : await Crp.findById(user.crpProfileId, "status");
+  return crp?.status === "Inactive";
+}
 
 function generateOtp() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -33,18 +52,22 @@ async function findHamletByLegacyName(hamletName) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-// POST /api/auth/login — Admin and CRP login with phone + password
+// POST /api/auth/login — Admin login with phone + password. CRPs sign in via
+// OTP; no app version uses password login for CRPs (the Admin login screen
+// rejects every non-ADMIN role), and several existing CRP accounts still carry
+// the old default password, so this endpoint accepts ADMIN accounts only.
 router.post("/login", async (req, res) => {
   try {
     const { phone, password } = req.body;
     if (!phone || !password) return res.status(400).json({ message: "phone and password required" });
 
-    const user = await User.findOne({ phone, role: { $in: [/^ADMIN$/i, /^CRP$/i] } })
+    const user = await User.findOne({ phone, role: { $in: [/^ADMIN$/i] } })
       .populate("crpProfileId");
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const valid = await bcrypt.compare(password, user.password || "");
     if (!valid) return res.status(401).json({ message: "Invalid password" });
+    if (await isInactiveCrp(user)) return res.status(403).json({ message: "This CRP account is inactive" });
 
     const token = jwt.sign(
       { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
@@ -52,7 +75,7 @@ router.post("/login", async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
-    res.json({ token, user });
+    res.json({ token, user: toSafeUser(user) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -94,6 +117,7 @@ router.post("/verify-otp", async (req, res) => {
     const user = await User.findOne({ phone }).populate("crpId", "name phone designation assignedLocation");
     if (!user) return res.status(404).json({ message: "User not found. Please register first." });
     if (user.role === "SHG Member" && !user.approved) return res.status(403).json({ message: "pending", approved: false });
+    if (await isInactiveCrp(user)) return res.status(403).json({ message: "This CRP account is inactive" });
 
     const token = jwt.sign(
       { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
@@ -101,7 +125,7 @@ router.post("/verify-otp", async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
-    res.json({ token, user });
+    res.json({ token, user: toSafeUser(user) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

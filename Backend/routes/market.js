@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import MarketPrice from "../models/MarketPrice.js";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
-import { notifyUsersByRole } from "../utils/notificationService.js";
 
 const router = express.Router();
 
@@ -51,12 +50,9 @@ router.post("/", verifyToken, async (req, res) => {
       updatedBy: req.user.userId,
     });
 
-    await notifyUsersByRole(["SHG Member", "CRP"], {
-      type: "market",
-      title: "Market Price Update",
-      message: `Market prices updated: Broiler ₹${broiler}/kg, Chick ₹${chick}, Egg ₹${egg}.`,
-      payload: { broiler, chick, egg },
-    });
+    // No broadcast here: the CRP app follows this call with POST /notifications
+    // to the hamlet/SHG/everyone target the CRP selected. Broadcasting here as
+    // well sent every farmer a second, untargeted copy of each price update.
 
     const priceObj = price.toObject();
     priceObj.updatedBy = await resolveUpdatedByName(priceObj.updatedBy);

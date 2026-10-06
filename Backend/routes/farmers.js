@@ -4,6 +4,7 @@ import Hamlet from "../models/Hamlet.js";
 import Street from "../models/Street.js";
 import { verifyToken, requireAdmin, requireCrpOrAdmin } from "../middleware/auth.js";
 import { notifyUsers } from "../utils/notificationService.js";
+import { canAccessFarmer } from "../utils/crpScope.js";
 
 const router = express.Router();
 
@@ -91,7 +92,12 @@ router.patch("/:id/location", verifyToken, requireAdmin, async (req, res) => {
 // PATCH /api/farmers/:id/approve
 router.patch("/:id/approve", verifyToken, requireCrpOrAdmin, async (req, res) => {
   try {
-    const farmer = await User.findByIdAndUpdate(req.params.id, { approved: true }, { new: true }).populate(POPULATE);
+    // Scoped to farmer accounts so this route can never alter a CRP/Admin user,
+    // and (for a CRP) to that CRP's own farmers.
+    if (!(await canAccessFarmer(req, req.params.id))) return res.status(404).json({ message: "Farmer not found" });
+    const farmer = await User.findOneAndUpdate(
+      { _id: req.params.id, role: "SHG Member" }, { approved: true }, { new: true }
+    ).populate(POPULATE);
     if (!farmer) return res.status(404).json({ message: "Farmer not found" });
 
     await notifyUsers([farmer._id.toString()], {
@@ -110,7 +116,8 @@ router.patch("/:id/approve", verifyToken, requireCrpOrAdmin, async (req, res) =>
 // DELETE /api/farmers/:id/reject
 router.delete("/:id/reject", verifyToken, requireCrpOrAdmin, async (req, res) => {
   try {
-    const farmer = await User.findById(req.params.id);
+    if (!(await canAccessFarmer(req, req.params.id))) return res.status(404).json({ message: "Farmer not found" });
+    const farmer = await User.findOne({ _id: req.params.id, role: "SHG Member" });
     if (!farmer) return res.status(404).json({ message: "Farmer not found" });
 
     await notifyUsers([farmer._id.toString()], {
@@ -130,7 +137,10 @@ router.delete("/:id/reject", verifyToken, requireCrpOrAdmin, async (req, res) =>
 // DELETE /api/farmers/:id
 router.delete("/:id", verifyToken, requireCrpOrAdmin, async (req, res) => {
   try {
-    const farmer = await User.findByIdAndDelete(req.params.id);
+    // Scoped to farmer accounts so a CRP/Admin user can never be deleted here,
+    // and (for a CRP) to that CRP's own farmers.
+    if (!(await canAccessFarmer(req, req.params.id))) return res.status(404).json({ message: "Farmer not found" });
+    const farmer = await User.findOneAndDelete({ _id: req.params.id, role: "SHG Member" });
     if (!farmer) return res.status(404).json({ message: "Farmer not found" });
     res.json({ success: true });
   } catch (err) {

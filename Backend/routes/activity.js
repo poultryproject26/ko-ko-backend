@@ -3,6 +3,7 @@ import BirdUpdate from "../models/BirdUpdate.js";
 import ServiceDemand from "../models/ServiceDemand.js";
 import DiseaseReport from "../models/DiseaseReport.js";
 import { verifyToken } from "../middleware/auth.js";
+import { crpRecordFilter } from "../utils/crpScope.js";
 
 const router = express.Router();
 
@@ -11,10 +12,11 @@ router.get("/", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
 
+    const scope = await crpRecordFilter(req);
     const [birds, demands, disease] = await Promise.all([
-      BirdUpdate.find().sort({ createdAt: -1 }).limit(30).populate("userId", "name hamlet"),
-      ServiceDemand.find().sort({ createdAt: -1 }).limit(30).populate("userId", "name hamlet"),
-      DiseaseReport.find().sort({ reportedAt: -1 }).limit(30).populate("userId", "name hamlet"),
+      BirdUpdate.find(scope).sort({ createdAt: -1 }).limit(30).populate("userId", "name hamlet"),
+      ServiceDemand.find(scope).sort({ createdAt: -1 }).limit(30).populate("userId", "name hamlet"),
+      DiseaseReport.find(scope).sort({ reportedAt: -1 }).limit(30).populate("userId", "name hamlet"),
     ]);
 
     const feed = [
