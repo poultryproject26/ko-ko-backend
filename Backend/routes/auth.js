@@ -8,6 +8,7 @@ import Street from "../models/Street.js";
 import Crp from "../models/Crp.js";
 import { notifyUsersByRole } from "../utils/notificationService.js";
 import { verifyToken, requireAdmin } from "../middleware/auth.js";
+import { canLoginWithPassword, initializePasswordWithOtp, isValidPhone, isValidPin } from "../utils/passwordAuth.js";
 
 const router = express.Router();
 
@@ -29,10 +30,6 @@ async function isInactiveCrp(user) {
   return crp?.status === "Inactive";
 }
 
-function generateOtp() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
-
 // Case-insensitive exact match against a Hamlet's name/nameTa/nameEn — used
 // only by the legacy string-based fallback paths below (register, profile),
 // which never invent an id or guess: an ambiguous match (2+ hamlets sharing
@@ -52,22 +49,23 @@ async function findHamletByLegacyName(hamletName) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-// POST /api/auth/login — Admin login with phone + password. CRPs sign in via
-// OTP; no app version uses password login for CRPs (the Admin login screen
-// rejects every non-ADMIN role), and several existing CRP accounts still carry
-// the old default password, so this endpoint accepts ADMIN accounts only.
+// POST /api/auth/login — phone + 4-digit password login for permitted roles.
 router.post("/login", async (req, res) => {
   try {
     const { phone, password } = req.body;
-    if (!phone || !password) return res.status(400).json({ message: "phone and password required" });
+    if (!isValidPhone(phone) || !isValidPin(password)) {
+      return res.status(401).json({ message: "Invalid phone number or password" });
+    }
 
-    const user = await User.findOne({ phone, role: { $in: [/^ADMIN$/i] } })
-      .populate("crpProfileId");
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const user = await User.findOne({ phone }).select("+password").populate("crpProfileId");
+    if (!user?.password) return res.status(401).json({ message: "Invalid phone number or password" });
 
-    const valid = await bcrypt.compare(password, user.password || "");
-    if (!valid) return res.status(401).json({ message: "Invalid password" });
-    if (await isInactiveCrp(user)) return res.status(403).json({ message: "This CRP account is inactive" });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) return res.status(401).json({ message: "Invalid phone number or password" });
+    const inactiveCrp = String(user.role || "").toUpperCase() === "CRP" && await isInactiveCrp(user);
+    if (!canLoginWithPassword(user, inactiveCrp)) {
+      return res.status(401).json({ message: "Invalid phone number or password" });
+    }
 
     const token = jwt.sign(
       { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
@@ -77,27 +75,30 @@ router.post("/login", async (req, res) => {
 
     res.json({ token, user: toSafeUser(user) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Authentication unavailable" });
   }
 });
 
-// POST /api/auth/send-otp — Farmer OTP login
+// OTP delivery is disabled until an SMS provider is configured. Never create
+// a code that cannot be delivered or expose one through logs or the response.
 router.post("/send-otp", async (req, res) => {
+  if (!isValidPhone(req.body?.phone)) return res.status(400).json({ message: "Valid phone required" });
+  return res.status(503).json({ message: "OTP delivery is not configured" });
+});
+
+// First-time password setup requires a valid OTP and only updates users without
+// an existing password. OTP consumption and password initialization are atomic
+// conditional updates so concurrent requests cannot overwrite a password.
+router.post("/setup-password", async (req, res) => {
   try {
-    const { phone } = req.body;
-    if (!phone || phone.length !== 10) return res.status(400).json({ message: "Valid phone required" });
-
-    const code = generateOtp();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
-    await Otp.deleteMany({ phone });
-    await Otp.create({ phone, code, expiresAt });
-
-    console.log(`OTP for ${phone}: ${code}`);
-
-    res.json({ success: true, message: "OTP sent", otp: code });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const { phone, otp, password } = req.body;
+    const result = await initializePasswordWithOtp({ Otp, User, bcrypt, phone, otp, password });
+    if (result.status === "invalid_request") return res.status(400).json({ message: "Invalid setup request" });
+    if (result.status === "invalid_otp") return res.status(400).json({ message: "Invalid or expired verification code" });
+    if (result.status === "unavailable") return res.status(409).json({ message: "Password setup is unavailable" });
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ message: "Password setup unavailable" });
   }
 });
 
