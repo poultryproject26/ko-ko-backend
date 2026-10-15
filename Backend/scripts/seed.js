@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 import Crp from "../models/Crp.js";
 import Hamlet from "../models/Hamlet.js";
+import { isValidPhone, isValidPin } from "../utils/passwordAuth.js";
 
 dotenv.config();
 
@@ -33,10 +34,14 @@ async function seed() {
 
   // 1. Create Admin
   if (!(await User.findOne({ role: "ADMIN" }))) {
-    const password = await bcrypt.hash("Admin@123", 10);
-    const admin = await User.create({ name: "Admin", phone: "0000000000", password, role: "ADMIN", approved: true });
-    console.log("✅ Admin created — Phone: 0000000000 | Password: Admin@123");
-    console.log("   ⚠️  Change password after first login!");
+    const adminPhone = process.env.ADMIN_PHONE;
+    const initialPassword = process.env.ADMIN_INITIAL_PASSWORD;
+    if (!isValidPhone(adminPhone) || !isValidPin(initialPassword)) {
+      throw new Error("Set ADMIN_PHONE and a four-digit ADMIN_INITIAL_PASSWORD before creating the initial Admin");
+    }
+    const password = await bcrypt.hash(initialPassword, 10);
+    const admin = await User.create({ name: "Admin", phone: adminPhone, password, role: "ADMIN", approved: true });
+    console.log(`✅ Admin created — id: ${admin._id}`);
   } else {
     console.log("Admin already exists — skipping");
   }
@@ -53,8 +58,7 @@ async function seed() {
 
     // Create CRP User account if missing
     if (!(await User.findOne({ phone: entry.phone }))) {
-      const hashed = await bcrypt.hash("changeme123", 10);
-      await User.create({ name: entry.name, phone: entry.phone, password: hashed, role: "CRP", crpProfileId: crp._id, approved: true });
+      await User.create({ name: entry.name, phone: entry.phone, role: "CRP", crpProfileId: crp._id, approved: true });
       console.log(`   CRP login created for ${entry.phone}`);
     }
 

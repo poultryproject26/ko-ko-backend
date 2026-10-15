@@ -5,6 +5,7 @@ import User from "../models/User.js";
 import Hamlet from "../models/Hamlet.js";
 import { verifyToken, requireAdmin } from "../middleware/auth.js";
 import { reassignHamletCrp } from "../utils/hamletCrp.js";
+import { hashPin, isValidPhone, isValidPin } from "../utils/passwordAuth.js";
 
 const router = express.Router();
 
@@ -22,15 +23,21 @@ router.get("/", verifyToken, requireAdmin, async (req, res) => {
 router.post("/", verifyToken, requireAdmin, async (req, res) => {
   try {
     const { name, phone, designation, assignedLocation, assignedHamlets, status, password } = req.body;
-    if (!name || !phone) return res.status(400).json({ message: "name and phone required" });
+    if (!name || !isValidPhone(phone)) {
+      return res.status(400).json({ message: "name and valid phone required" });
+    }
 
     if (await Crp.findOne({ phone })) return res.status(400).json({ message: "CRP with this phone already exists" });
 
     // A new CRP login account needs an explicit password — there is no default.
     // Checked before anything is written so a failed request leaves no partial CRP.
-    const needsLoginAccount = !(await User.findOne({ phone }));
-    if (needsLoginAccount && (typeof password !== "string" || !password.trim())) {
-      return res.status(400).json({ message: "password is required" });
+    const existingUser = await User.findOne({ phone });
+    if (existingUser && String(existingUser.role || "").toUpperCase() !== "CRP") {
+      return res.status(409).json({ message: "Phone already belongs to another account type" });
+    }
+    const needsLoginAccount = !existingUser;
+    if (needsLoginAccount && !isValidPin(password)) {
+      return res.status(400).json({ message: "Password must contain exactly four digits" });
     }
 
     const crp = await Crp.create({
@@ -49,13 +56,54 @@ router.post("/", verifyToken, requireAdmin, async (req, res) => {
     }
 
     if (needsLoginAccount) {
-      const hashed = await bcrypt.hash(password, 10);
+      const hashed = await hashPin(bcrypt, password);
       await User.create({ name, phone, password: hashed, role: "CRP", crpProfileId: crp._id, approved: true });
     }
 
     res.status(201).json(crp);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin-only in-person enrollment/recovery for the CRP tied to this profile.
+router.post("/:id/password", verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    const passwordHash = await hashPin(bcrypt, password);
+    if (!passwordHash) {
+      return res.status(400).json({ message: "Password must contain exactly four digits" });
+    }
+
+    const crp = await Crp.findById(req.params.id);
+    if (!crp) return res.status(404).json({ message: "CRP not found" });
+
+    const existing = await User.findOne({ phone: crp.phone });
+    if (existing && String(existing.role).toUpperCase() !== "CRP") {
+      return res.status(409).json({ message: "CRP account is unavailable" });
+    }
+
+    if (existing) {
+      const updated = await User.findOneAndUpdate(
+        { _id: existing._id, role: "CRP" },
+        { $set: { password: passwordHash, crpProfileId: crp._id, approved: true } },
+        { new: true, runValidators: true }
+      );
+      if (!updated) return res.status(409).json({ message: "CRP account is unavailable" });
+    } else {
+      await User.create({
+        name: crp.name,
+        phone: crp.phone,
+        password: passwordHash,
+        role: "CRP",
+        crpProfileId: crp._id,
+        approved: true,
+      });
+    }
+
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ message: "Could not set CRP password" });
   }
 });
 

@@ -2,13 +2,12 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import User from "../models/User.js";
-import Otp from "../models/Otp.js";
 import Hamlet from "../models/Hamlet.js";
 import Street from "../models/Street.js";
 import Crp from "../models/Crp.js";
 import { notifyUsersByRole } from "../utils/notificationService.js";
 import { verifyToken, requireAdmin } from "../middleware/auth.js";
-import { canLoginWithPassword, initializePasswordWithOtp, isValidPhone, isValidPin } from "../utils/passwordAuth.js";
+import { authenticateUserPassword, hashPin, isValidPhone, isValidPin } from "../utils/passwordAuth.js";
 
 const router = express.Router();
 
@@ -58,12 +57,8 @@ router.post("/login", async (req, res) => {
     }
 
     const user = await User.findOne({ phone }).select("+password").populate("crpProfileId");
-    if (!user?.password) return res.status(401).json({ message: "Invalid phone number or password" });
-
-    const valid = await bcrypt.compare(password, user.password);
-    if (!valid) return res.status(401).json({ message: "Invalid phone number or password" });
-    const inactiveCrp = String(user.role || "").toUpperCase() === "CRP" && await isInactiveCrp(user);
-    if (!canLoginWithPassword(user, inactiveCrp)) {
+    const inactiveCrp = String(user?.role || "").toUpperCase() === "CRP" && await isInactiveCrp(user);
+    if (!await authenticateUserPassword({ user, password, bcrypt, inactiveCrp })) {
       return res.status(401).json({ message: "Invalid phone number or password" });
     }
 
@@ -74,61 +69,8 @@ router.post("/login", async (req, res) => {
     );
 
     res.json({ token, user: toSafeUser(user) });
-  } catch (err) {
-    res.status(500).json({ message: "Authentication unavailable" });
-  }
-});
-
-// OTP delivery is disabled until an SMS provider is configured. Never create
-// a code that cannot be delivered or expose one through logs or the response.
-router.post("/send-otp", async (req, res) => {
-  if (!isValidPhone(req.body?.phone)) return res.status(400).json({ message: "Valid phone required" });
-  return res.status(503).json({ message: "OTP delivery is not configured" });
-});
-
-// First-time password setup requires a valid OTP and only updates users without
-// an existing password. OTP consumption and password initialization are atomic
-// conditional updates so concurrent requests cannot overwrite a password.
-router.post("/setup-password", async (req, res) => {
-  try {
-    const { phone, otp, password } = req.body;
-    const result = await initializePasswordWithOtp({ Otp, User, bcrypt, phone, otp, password });
-    if (result.status === "invalid_request") return res.status(400).json({ message: "Invalid setup request" });
-    if (result.status === "invalid_otp") return res.status(400).json({ message: "Invalid or expired verification code" });
-    if (result.status === "unavailable") return res.status(409).json({ message: "Password setup is unavailable" });
-    return res.json({ success: true });
   } catch {
-    return res.status(500).json({ message: "Password setup unavailable" });
-  }
-});
-
-// POST /api/auth/verify-otp
-router.post("/verify-otp", async (req, res) => {
-  try {
-    const { phone, otp } = req.body;
-    if (!phone || !otp) return res.status(400).json({ message: "phone and otp required" });
-
-    const record = await Otp.findOne({ phone, code: otp, used: false });
-    if (!record) return res.status(400).json({ message: "Invalid OTP" });
-    if (record.expiresAt < new Date()) return res.status(400).json({ message: "OTP expired" });
-
-    record.used = true;
-    await record.save();
-
-    const user = await User.findOne({ phone }).populate("crpId", "name phone designation assignedLocation");
-    if (!user) return res.status(404).json({ message: "User not found. Please register first." });
-    if (user.role === "SHG Member" && !user.approved) return res.status(403).json({ message: "pending", approved: false });
-    if (await isInactiveCrp(user)) return res.status(403).json({ message: "This CRP account is inactive" });
-
-    const token = jwt.sign(
-      { userId: user._id, role: String(user.role || "").toUpperCase(), hamlet: user.hamlet },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
-    );
-
-    res.json({ token, user: toSafeUser(user) });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ message: "Authentication unavailable" });
   }
 });
 
@@ -136,7 +78,7 @@ router.post("/verify-otp", async (req, res) => {
 router.post("/register", async (req, res) => {
   try {
     const { phone, name, hamletId, streetId, houseNo, shg_name } = req.body;
-    if (!phone || !name || !shg_name) return res.status(400).json({ message: "Required fields missing" });
+    if (!isValidPhone(phone) || !name || !shg_name) return res.status(400).json({ message: "Valid phone, name, and SHG group are required" });
 
     const existing = await User.findOne({ phone });
     if (existing) return res.status(400).json({ message: "Phone already registered" });
@@ -213,15 +155,19 @@ router.post("/register", async (req, res) => {
 // SEED_SECRET check is kept as a second, independent check on top).
 router.post("/seed-crp", verifyToken, requireAdmin, async (req, res) => {
   try {
-    const { phone, name, role, hamlet, secret } = req.body;
+    const { phone, name, role, hamlet, secret, password } = req.body;
     if (secret !== process.env.SEED_SECRET) return res.status(403).json({ message: "Forbidden" });
     if (role !== "CRP") return res.status(400).json({ message: "Only CRP can be seeded" });
+    if (!isValidPhone(phone) || !isValidPin(password)) {
+      return res.status(400).json({ message: "Valid phone and four-digit password are required" });
+    }
 
     const existing = await User.findOne({ phone });
     if (existing) return res.status(400).json({ message: "User already exists" });
 
-    const user = await User.create({ phone, name, role, hamlet, approved: true });
-    res.status(201).json(user);
+    const passwordHash = await hashPin(bcrypt, password);
+    const user = await User.create({ phone, name, role, hamlet, password: passwordHash, approved: true });
+    res.status(201).json(toSafeUser(user));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

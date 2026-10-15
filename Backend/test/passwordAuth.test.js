@@ -1,111 +1,41 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  authenticateUserPassword,
   canLoginWithPassword,
-  initializePasswordWithOtp,
+  hashPin,
   isValidPhone,
   isValidPin,
+  setFarmerPassword,
 } from "../utils/passwordAuth.js";
 
-function makeModels({ password, otpExpired = false } = {}) {
-  const otpRecords = ["012345", "543210"].map((code) => ({
-    phone: "9876543210",
-    code,
-    used: false,
-    expiresAt: new Date("2030-01-01"),
-  }));
-  const userRecord = { phone: "9876543210", role: "SHG Member", approved: true };
-  if (password !== undefined) userRecord.password = password;
-
-  const Otp = {
-    async findOneAndUpdate(filter, update, options) {
-      assert.equal(options.new, true);
-      const now = filter.expiresAt.$gt;
-      const otpRecord = otpRecords.find((record) =>
-        record.phone === filter.phone &&
-        record.code === filter.code &&
-        record.used === filter.used &&
-        record.expiresAt > now
-      );
-      if (!otpRecord || otpExpired) return null;
-
-      otpRecord.used = update.$set.used;
-      return otpRecord;
-    },
-  };
-
-  const User = {
-    async findOneAndUpdate(filter, update) {
-      if (filter.phone !== userRecord.phone) return null;
-      const matchesUnset = !("password" in userRecord) || userRecord.password === null || userRecord.password === "";
-      if (!matchesUnset) return null;
-      userRecord.password = update.$set.password;
-      return userRecord;
-    },
-  };
-
-  return { Otp, User, otpRecords, userRecord };
-}
-
-const bcrypt = {
-  async hash(password, rounds) {
-    assert.equal(rounds, 10);
-    return `bcrypt:${password}`;
-  },
-};
-
-test("validates phone and preserves four-digit strings with leading zeros", () => {
+test("validates phone numbers and string PINs, preserving leading zeroes", () => {
   assert.equal(isValidPhone("9876543210"), true);
-  assert.equal(isValidPhone("98765"), false);
+  assert.equal(isValidPhone("987654321"), false);
+  assert.equal(isValidPhone("98765x3210"), false);
   assert.equal(isValidPin("0047"), true);
+  assert.equal(isValidPin("0000"), true);
   assert.equal(isValidPin("47"), false);
+  assert.equal(isValidPin("12345"), false);
   assert.equal(isValidPin(47), false);
 });
 
-test("rejects invalid or expired OTPs without setting a password", async () => {
-  const models = makeModels({ otpExpired: true });
-  const result = await initializePasswordWithOtp({
-    ...models,
-    bcrypt,
-    phone: "9876543210",
-    otp: "012345",
-    password: "0047",
-    now: new Date("2029-01-01"),
-  });
-  assert.equal(result.status, "invalid_otp");
-  assert.equal(models.userRecord.password, undefined);
+test("hashes only valid four-digit strings with bcrypt", async () => {
+  const calls = [];
+  const bcrypt = {
+    async hash(password, rounds) {
+      calls.push({ password, rounds });
+      return "bcrypt-hash";
+    },
+  };
+
+  assert.equal(await hashPin(bcrypt, "0047"), "bcrypt-hash");
+  assert.deepEqual(calls, [{ password: "0047", rounds: 10 }]);
+  assert.equal(await hashPin(bcrypt, "47"), null);
+  assert.equal(calls.length, 1);
 });
 
-test("creates a bcrypt hash only after consuming a valid OTP", async () => {
-  const models = makeModels();
-  const result = await initializePasswordWithOtp({
-    ...models,
-    bcrypt,
-    phone: "9876543210",
-    otp: "012345",
-    password: "0047",
-    now: new Date("2029-01-01"),
-  });
-  assert.equal(result.status, "ok");
-  assert.equal(models.otpRecords[0].used, true);
-  assert.equal(models.userRecord.password, "bcrypt:0047");
-});
-
-test("does not overwrite an existing password", async () => {
-  const models = makeModels({ password: "existing-hash" });
-  const result = await initializePasswordWithOtp({
-    ...models,
-    bcrypt,
-    phone: "9876543210",
-    otp: "012345",
-    password: "0047",
-    now: new Date("2029-01-01"),
-  });
-  assert.equal(result.status, "unavailable");
-  assert.equal(models.userRecord.password, "existing-hash");
-});
-
-test("allows only supported persisted roles and enforces farmer approval and CRP status", () => {
+test("allows only approved Farmer, active CRP, and Admin roles", () => {
   assert.equal(canLoginWithPassword({ role: "ADMIN" }), true);
   assert.equal(canLoginWithPassword({ role: "CRP" }), true);
   assert.equal(canLoginWithPassword({ role: "CRP" }, true), false);
@@ -114,33 +44,91 @@ test("allows only supported persisted roles and enforces farmer approval and CRP
   assert.equal(canLoginWithPassword({ role: "BUYER", approved: true }), false);
 });
 
-test("concurrent setup attempts cannot consume one OTP or initialize twice", async () => {
-  const models = makeModels();
-  const setup = () => initializePasswordWithOtp({
-    ...models,
-    bcrypt,
-    phone: "9876543210",
-    otp: "012345",
-    password: "0047",
-    now: new Date("2029-01-01"),
-  });
-  const outcomes = await Promise.all([setup(), setup()]);
-  assert.deepEqual(outcomes.map(({ status }) => status).sort(), ["invalid_otp", "ok"]);
-  assert.equal(models.userRecord.password, "bcrypt:0047");
+test("authenticates persisted roles by four-digit string and rejects invalid passwords", async () => {
+  const bcrypt = {
+    async compare(candidate, hash) {
+      return candidate === "0047" && hash === "stored-hash";
+    },
+  };
+  const accounts = [
+    { role: "SHG Member", approved: true },
+    { role: "CRP" },
+    { role: "ADMIN" },
+  ];
+
+  for (const user of accounts) {
+    user.password = "stored-hash";
+    assert.equal(await authenticateUserPassword({ user, password: "0047", bcrypt }), true);
+    assert.equal(await authenticateUserPassword({ user, password: "0048", bcrypt }), false);
+    assert.equal(await authenticateUserPassword({ user, password: 47, bcrypt }), false);
+  }
+  assert.equal(await authenticateUserPassword({ user: null, password: "0047", bcrypt }), false);
+  assert.equal(
+    await authenticateUserPassword({ user: { role: "SHG Member", approved: false, password: "stored-hash" }, password: "0047", bcrypt }),
+    false
+  );
+  assert.equal(
+    await authenticateUserPassword({ user: { role: "CRP", password: "stored-hash" }, password: "0047", bcrypt, inactiveCrp: true }),
+    false
+  );
+  assert.equal(
+    await authenticateUserPassword({ user: { role: "ADMIN", password: "stored-hash" }, password: "0047", bcrypt, inactiveCrp: true }),
+    true
+  );
 });
 
-test("distinct OTPs cannot initialize the same account more than once concurrently", async () => {
-  const models = makeModels();
-  const setup = (otp, password) => initializePasswordWithOtp({
-    ...models,
-    bcrypt,
-    phone: "9876543210",
-    otp,
-    password,
-    now: new Date("2029-01-01"),
+test("staff enrollment stores only a bcrypt hash and approves the Farmer", async () => {
+  let query;
+  let update;
+  const User = {
+    async findOneAndUpdate(filter, changes, options) {
+      query = filter;
+      update = changes;
+      assert.equal(options.runValidators, true);
+      return { _id: "farmer-id", role: "SHG Member", approved: true };
+    },
+  };
+  const bcrypt = {
+    async hash(password, rounds) {
+      assert.equal(password, "0047");
+      assert.equal(rounds, 10);
+      return "bcrypt-hash";
+    },
+  };
+
+  const farmerFilter = { _id: "farmer-id", role: "SHG Member", crpId: "assigned-crp-id" };
+  const result = await setFarmerPassword({ User, bcrypt, farmerFilter, password: "0047" });
+
+  assert.equal(result.status, "ok");
+  assert.deepEqual(query, farmerFilter);
+  assert.deepEqual(update, { $set: { password: "bcrypt-hash", approved: true } });
+  assert.equal("password" in result.farmer, false);
+});
+
+test("rejects invalid PINs before modifying a Farmer", async () => {
+  let updateCalled = false;
+  const User = {
+    async findOneAndUpdate() {
+      updateCalled = true;
+      return null;
+    },
+  };
+  const result = await setFarmerPassword({
+    User,
+    bcrypt: { hash: async () => "unused" },
+    farmerFilter: { _id: "farmer-id", role: "SHG Member" },
+    password: "abc4",
   });
-  const outcomes = await Promise.all([setup("012345", "0047"), setup("543210", "9999")]);
-  assert.equal(outcomes.filter(({ status }) => status === "ok").length, 1);
-  assert.equal(outcomes.filter(({ status }) => status === "unavailable").length, 1);
-  assert.ok(["bcrypt:0047", "bcrypt:9999"].includes(models.userRecord.password));
+  assert.equal(result.status, "invalid_pin");
+  assert.equal(updateCalled, false);
+});
+
+test("returns unavailable when the requested account is not a Farmer", async () => {
+  const result = await setFarmerPassword({
+    User: { findOneAndUpdate: async () => null },
+    bcrypt: { hash: async () => "bcrypt-hash" },
+    farmerFilter: { _id: "not-a-farmer", role: "SHG Member" },
+    password: "0047",
+  });
+  assert.equal(result.status, "unavailable");
 });

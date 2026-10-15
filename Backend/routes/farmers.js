@@ -1,10 +1,12 @@
 import express from "express";
+import bcrypt from "bcryptjs";
 import User from "../models/User.js";
 import Hamlet from "../models/Hamlet.js";
 import Street from "../models/Street.js";
 import { verifyToken, requireAdmin, requireCrpOrAdmin } from "../middleware/auth.js";
 import { notifyUsers } from "../utils/notificationService.js";
-import { canAccessFarmer } from "../utils/crpScope.js";
+import { canAccessFarmer, getCrpScopeId } from "../utils/crpScope.js";
+import { setFarmerPassword } from "../utils/passwordAuth.js";
 
 const router = express.Router();
 
@@ -13,6 +15,50 @@ const POPULATE = [
   { path: "streetId", select: "name nameTa nameEn" },
   { path: "crpId",    select: "name phone designation assignedLocation" },
 ];
+
+// Staff must verify the farmer in person before initializing or resetting this
+// PIN. The authenticated role and CRP scope—not knowledge of a phone number—
+// authorize the operation.
+router.post("/:id/password", verifyToken, requireCrpOrAdmin, async (req, res) => {
+  try {
+    const farmerFilter = { _id: req.params.id, role: "SHG Member" };
+    if (String(req.user?.role || "").toUpperCase() === "CRP") {
+      const crpId = await getCrpScopeId(req);
+      if (!crpId) return res.status(403).json({ message: "Assigned CRP profile required" });
+      farmerFilter.crpId = crpId;
+    }
+
+    const wasApproved = await User.findOne(
+      farmerFilter,
+      "approved"
+    );
+    if (!wasApproved) return res.status(404).json({ message: "Farmer not found" });
+
+    const result = await setFarmerPassword({
+      User,
+      bcrypt,
+      farmerFilter,
+      password: req.body?.password,
+    });
+    if (result.status === "invalid_pin") {
+      return res.status(400).json({ message: "Password must contain exactly four digits" });
+    }
+    if (result.status === "unavailable") return res.status(404).json({ message: "Farmer not found" });
+
+    if (!wasApproved.approved) {
+      await notifyUsers([result.farmer._id.toString()], {
+        type: "user_approved",
+        title: "Account Approved",
+        message: "Your account has been approved. You can now log in.",
+        payload: { userId: result.farmer._id.toString() },
+      });
+    }
+
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ message: "Could not set farmer password" });
+  }
+});
 
 // GET /api/farmers
 router.get("/", verifyToken, requireCrpOrAdmin, async (req, res) => {

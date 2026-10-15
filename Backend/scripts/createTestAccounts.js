@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import User from "../models/User.js";
+import { isValidPin } from "../utils/passwordAuth.js";
 
 dotenv.config();
 
@@ -9,11 +10,14 @@ dotenv.config();
 // beyond a phone-existence check, none is modified or deleted.
 const ACCOUNTS = [
   { name: "Test Farmer", phone: "9876543210", role: "SHG Member", password: null,   approved: true },
-  { name: "Test CRP",    phone: "9876543211", role: "CRP",        password: "crp",   approved: true },
-  { name: "Test Admin",  phone: "9876543212", role: "ADMIN",      password: "admin", approved: true },
+  { name: "Test CRP",    phone: "9876543211", role: "CRP",        password: process.env.TEST_CRP_PASSWORD, approved: true },
+  { name: "Test Admin",  phone: "9876543212", role: "ADMIN",      password: process.env.TEST_ADMIN_PASSWORD, approved: true },
 ];
 
 async function run() {
+  if (!isValidPin(ACCOUNTS[1].password) || !isValidPin(ACCOUNTS[2].password)) {
+    throw new Error("Set TEST_CRP_PASSWORD and TEST_ADMIN_PASSWORD to four-digit values before creating test accounts");
+  }
   await mongoose.connect(process.env.MONGO_URI);
 
   const results = [];
@@ -31,7 +35,7 @@ async function run() {
     results.push({ _id: user._id.toString(), phone: user.phone, role: user.role, status: "created" });
   }
 
-  // Never logs password/OTP/connection-string values — only id/phone/role/status.
+  // Never logs credentials or connection strings — only id/phone/role/status.
   console.log(JSON.stringify(results, null, 2));
 
   await mongoose.disconnect();

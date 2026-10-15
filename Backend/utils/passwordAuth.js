@@ -14,32 +14,26 @@ export function canLoginWithPassword(user, inactiveCrp = false) {
   return false;
 }
 
-export async function initializePasswordWithOtp({ Otp, User, bcrypt, phone, otp, password, now = new Date() }) {
-  if (!isValidPhone(phone) || typeof otp !== "string" || !/^\d{6}$/.test(otp) || !isValidPin(password)) {
-    return { status: "invalid_request" };
-  }
+export async function authenticateUserPassword({ user, password, bcrypt, inactiveCrp = false }) {
+  if (!isValidPin(password) || !user?.password) return false;
+  if (!(await bcrypt.compare(password, user.password))) return false;
+  return canLoginWithPassword(user, inactiveCrp);
+}
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const consumedOtp = await Otp.findOneAndUpdate(
-    { phone, code: otp, used: false, expiresAt: { $gt: now } },
-    { $set: { used: true } },
-    { new: true }
-  );
-  if (!consumedOtp) return { status: "invalid_otp" };
+export async function hashPin(bcrypt, password) {
+  if (!isValidPin(password)) return null;
+  return bcrypt.hash(password, 10);
+}
 
-  const user = await User.findOneAndUpdate(
-    {
-      phone,
-      $or: [
-        { password: { $exists: false } },
-        { password: null },
-        { password: "" },
-      ],
-    },
-    { $set: { password: passwordHash } },
+export async function setFarmerPassword({ User, bcrypt, farmerFilter, password }) {
+  const passwordHash = await hashPin(bcrypt, password);
+  if (!passwordHash) return { status: "invalid_pin" };
+
+  const farmer = await User.findOneAndUpdate(
+    farmerFilter,
+    { $set: { password: passwordHash, approved: true } },
     { new: true, runValidators: true }
   );
-  if (!user) return { status: "unavailable" };
-
-  return { status: "ok", user };
+  if (!farmer) return { status: "unavailable" };
+  return { status: "ok", farmer };
 }
