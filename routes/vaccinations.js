@@ -5,6 +5,16 @@ import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
 import { generateSchedule } from "../utils/scheduleEngine.js";
 import { notifyUsers, notifyUsersByRole, getUsersByRole } from "../utils/notificationService.js";
+import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
+
+// For CRP actions on an existing record: 404 if missing, 403 if it belongs to
+// another CRP's farmer. Returns true when the caller may proceed.
+async function guardRecord(req, res, Model, id, notFoundMessage) {
+  const existing = await Model.findById(id, "userId");
+  if (!existing) { res.status(404).json({ message: notFoundMessage }); return false; }
+  if (!(await canAccessFarmer(req, existing.userId))) { res.status(403).json({ message: "Forbidden" }); return false; }
+  return true;
+}
 
 const router = express.Router();
 
@@ -52,9 +62,19 @@ router.get("/batches/me", verifyToken, async (req, res) => {
   }
 });
 
+// A farmer may only read their own batches/schedule; Admin may read any; a CRP
+// only farmers assigned to them (see utils/crpScope.js).
+async function canReadFarmer(req) {
+  const role = String(req.user.role || "").toUpperCase();
+  if (role === "ADMIN") return true;
+  if (role === "CRP") return canAccessFarmer(req, req.params.farmerId);
+  return String(req.params.farmerId) === String(req.user.userId);
+}
+
 // GET /api/vaccinations/batches/farmer/:farmerId
 router.get("/batches/farmer/:farmerId", verifyToken, async (req, res) => {
   try {
+    if (!(await canReadFarmer(req))) return res.status(403).json({ message: "Forbidden" });
     const batches = await BirdBatch.find({ userId: req.params.farmerId }).sort({ createdAt: -1 });
     res.json(batches);
   } catch (err) {
@@ -66,7 +86,7 @@ router.get("/batches/farmer/:farmerId", verifyToken, async (req, res) => {
 router.get("/batches/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const batches = await BirdBatch.find()
+    const batches = await BirdBatch.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ createdAt: -1 });
     res.json(batches);
@@ -81,6 +101,7 @@ router.post("/batches", verifyToken, async (req, res) => {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const { userId, batchName, numberOfChicks, batchDate } = req.body;
     if (!userId || !batchDate) return res.status(400).json({ message: "userId and batchDate required" });
+    if (!(await canAccessFarmer(req, userId))) return res.status(403).json({ message: "Forbidden" });
 
     const batch = await BirdBatch.create({
       userId,
@@ -115,6 +136,7 @@ router.post("/batches", verifyToken, async (req, res) => {
 router.patch("/batches/:batchId/status", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    if (!(await guardRecord(req, res, BirdBatch, req.params.batchId, "Batch not found"))) return;
     const batch = await BirdBatch.findByIdAndUpdate(
       req.params.batchId,
       { batchStatus: req.body.batchStatus, updatedAt: new Date() },
@@ -132,11 +154,60 @@ router.delete("/batches/:batchId", verifyToken, async (req, res) => {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const batch = await BirdBatch.findById(req.params.batchId);
     if (!batch) return res.status(404).json({ message: "Batch not found" });
+    if (!(await canAccessFarmer(req, batch.userId))) return res.status(403).json({ message: "Forbidden" });
 
     await Vaccination.deleteMany({ batchId: batch._id });
     await batch.deleteOne();
 
     res.json({ message: "Batch deleted" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/vaccinations/batches/:batchId/mortality — record newly-dead birds
+// for a batch. `count` is an INCREMENT (deaths since the last update, not a
+// running total) — each call adds to mortalityCount and subtracts the same
+// amount from activeBirdCount, so re-submitting never double-counts a death
+// already recorded. The batch's own farmer or their assigned CRP may call
+// this; nothing else in the app currently manages an individual batch's data,
+// so this mirrors that same two-party access pattern rather than introducing
+// a new one.
+router.patch("/batches/:batchId/mortality", verifyToken, async (req, res) => {
+  try {
+    const delta = Number(req.body.count);
+    if (!Number.isInteger(delta) || delta <= 0) {
+      return res.status(400).json({ message: "count must be a positive whole number" });
+    }
+
+    const batch = await BirdBatch.findById(req.params.batchId);
+    if (!batch) return res.status(404).json({ message: "Batch not found" });
+
+    const role = String(req.user.role || "").toUpperCase();
+    if (role === "CRP") {
+      const [crpUser, farmer] = await Promise.all([
+        User.findById(req.user.userId, "crpProfileId"),
+        User.findById(batch.userId, "crpId"),
+      ]);
+      const isAssigned = crpUser?.crpProfileId && farmer?.crpId
+        && String(farmer.crpId) === String(crpUser.crpProfileId);
+      if (!isAssigned) return res.status(403).json({ message: "Forbidden" });
+    } else if (String(batch.userId) !== String(req.user.userId)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (delta > batch.activeBirdCount) {
+      return res.status(400).json({
+        message: `Cannot record ${delta} deaths — only ${batch.activeBirdCount} active birds remain in this batch`,
+      });
+    }
+
+    batch.mortalityCount = (batch.mortalityCount || 0) + delta;
+    batch.activeBirdCount -= delta;
+    batch.updatedAt = new Date();
+    await batch.save();
+
+    res.json(batch);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -170,6 +241,7 @@ router.get("/schedule/me", verifyToken, async (req, res) => {
 // GET /api/vaccinations/schedule/:farmerId — CRP sees a farmer's all batches
 router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
   try {
+    if (!(await canReadFarmer(req))) return res.status(403).json({ message: "Forbidden" });
     const batches = await BirdBatch.find({ userId: req.params.farmerId });
     if (!batches.length) return res.json([]);
 
@@ -180,6 +252,8 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
         batchId: batch._id,
         batchName: batch.batchName || "Batch 1",
         numberOfChicks: batch.numberOfChicks,
+        activeBirdCount: batch.activeBirdCount,
+        mortalityCount: batch.mortalityCount,
         batchDate: batch.batchDate,
         batchStatus: batch.batchStatus,
         schedule: buildScheduleResult(schedule, dbRecords),
@@ -198,6 +272,7 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
 router.patch("/:id/complete", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    if (!(await guardRecord(req, res, Vaccination, req.params.id, "Not found"))) return;
     const { notes } = req.body;
     const record = await Vaccination.findByIdAndUpdate(
       req.params.id,
@@ -226,6 +301,7 @@ router.patch("/:id/complete", verifyToken, async (req, res) => {
 router.patch("/:id/missed", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    if (!(await guardRecord(req, res, Vaccination, req.params.id, "Not found"))) return;
     const { notes } = req.body;
     const record = await Vaccination.findByIdAndUpdate(
       req.params.id,
@@ -259,6 +335,7 @@ router.patch("/:id/reschedule", verifyToken, async (req, res) => {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const { rescheduledDate, notes } = req.body;
     if (!rescheduledDate) return res.status(400).json({ message: "rescheduledDate required" });
+    if (!(await guardRecord(req, res, Vaccination, req.params.id, "Not found"))) return;
     const record = await Vaccination.findByIdAndUpdate(
       req.params.id,
       { status: "rescheduled", rescheduledDate: new Date(rescheduledDate), notes },
@@ -275,6 +352,36 @@ router.patch("/:id/reschedule", verifyToken, async (req, res) => {
     });
 
     res.json(record);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Manual entry ──────────────────────────────────────────────────────────────
+
+// POST /api/vaccinations — CRP manually records a single, already-completed
+// vaccination/deworming entry. Not tied to a batch and does NOT generate a
+// schedule (isAutoScheduled: false) — a one-off record only.
+router.post("/", verifyToken, async (req, res) => {
+  try {
+    if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    const { userId, type, ageGroup, dateGiven, nextDueDate, status } = req.body;
+    if (!userId || !type || !dateGiven || !nextDueDate) {
+      return res.status(400).json({ message: "userId, type, dateGiven, and nextDueDate are required" });
+    }
+    if (!(await canAccessFarmer(req, userId))) return res.status(403).json({ message: "Forbidden" });
+
+    const record = await Vaccination.create({
+      userId,
+      type,
+      ageGroup,
+      dateGiven: new Date(dateGiven),
+      nextDueDate: new Date(nextDueDate),
+      status: status || "completed",
+      isAutoScheduled: false,
+    });
+
+    res.status(201).json(record);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -297,7 +404,7 @@ router.get("/", verifyToken, async (req, res) => {
 router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const records = await Vaccination.find()
+    const records = await Vaccination.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name")
       .populate("batchId", "batchName batchDate")
       .sort({ scheduledDate: -1 });

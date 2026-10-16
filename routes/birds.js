@@ -1,6 +1,7 @@
 import express from "express";
 import BirdUpdate from "../models/BirdUpdate.js";
 import { verifyToken } from "../middleware/auth.js";
+import { crpRecordFilter } from "../utils/crpScope.js";
 
 const router = express.Router();
 
@@ -61,7 +62,7 @@ router.get("/check-week", verifyToken, async (req, res) => {
 router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const updates = await BirdUpdate.find()
+    const updates = await BirdUpdate.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name role")
       .sort({ createdAt: -1 });
     res.json(updates);

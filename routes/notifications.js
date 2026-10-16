@@ -15,21 +15,19 @@ const router = express.Router();
 // GET /api/notifications — get notifications for the current user
 router.get("/", verifyToken, async (req, res) => {
   try {
-    let query = {};
-
-    if (req.user.role === "CRP") {
-      query = {};
+    // Every role (CRP included) only sees notifications addressed to them —
+    // previously a CRP received every notification in the system, including
+    // other farmers' and other CRPs' private ones.
+    let query;
+    const { read } = req.query;
+    if (read === "true") {
+      const since = new Date();
+      since.setDate(since.getDate() - 30);
+      query = { recipient_ids: req.user.userId, read_by: req.user.userId, created_at: { $gte: since } };
+    } else if (read === "false") {
+      query = { recipient_ids: req.user.userId, read_by: { $ne: req.user.userId } };
     } else {
-      const { read } = req.query;
-      if (read === "true") {
-        const since = new Date();
-        since.setDate(since.getDate() - 30);
-        query = { recipient_ids: req.user.userId, read_by: req.user.userId, created_at: { $gte: since } };
-      } else if (read === "false") {
-        query = { recipient_ids: req.user.userId, read_by: { $ne: req.user.userId } };
-      } else {
-        query = { recipient_ids: req.user.userId };
-      }
+      query = { recipient_ids: req.user.userId };
     }
 
     const notifications = await Notification.find(query).sort({ created_at: -1 }).limit(50);
@@ -120,7 +118,9 @@ router.patch("/:id/read", verifyToken, async (req, res) => {
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    await Notification.findByIdAndDelete(req.params.id);
+    // Only a notification this CRP actually received.
+    const deleted = await Notification.findOneAndDelete({ _id: req.params.id, recipient_ids: req.user.userId });
+    if (!deleted) return res.status(404).json({ message: "Notification not found" });
     res.json({ message: "Deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
