@@ -47,14 +47,24 @@ router.post("/", verifyToken, async (req, res) => {
   }
 });
 
-// DELETE /api/shg/:id — CRP deletes SHG group and all its farmers
+// DELETE /api/shg/:id — CRP deletes an SHG group. Blocked while any farmer still
+// belongs to the group (same pattern as hamlet/street deletion). Farmer accounts
+// are never deleted here — previously this removed every farmer with a matching
+// shg_name across all CRPs, without the confirmation saying so.
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const group = await Shg.findByIdAndDelete(req.params.id);
+    const group = await Shg.findById(req.params.id);
     if (!group) return res.status(404).json({ message: "Group not found" });
-    const result = await User.deleteMany({ shg_name: group.name, role: "SHG Member" });
-    res.json({ success: true, deletedFarmers: result.deletedCount });
+    const farmerCount = await User.countDocuments({ shg_name: group.name, role: "SHG Member" });
+    if (farmerCount > 0) {
+      return res.status(409).json({
+        message: `இந்த குழுவில் ${farmerCount} விவசாயிகள் உள்ளனர் — நீக்க முடியாது (Cannot delete: ${farmerCount} farmer(s) still in this group)`,
+        farmerCount,
+      });
+    }
+    await group.deleteOne();
+    res.json({ success: true, deletedFarmers: 0 });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

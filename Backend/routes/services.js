@@ -2,6 +2,7 @@ import express from "express";
 import ServiceDemand from "../models/ServiceDemand.js";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
+import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
 
 const router = express.Router();
 
@@ -44,7 +45,7 @@ router.get("/", verifyToken, async (req, res) => {
 router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
-    const demands = await ServiceDemand.find()
+    const demands = await ServiceDemand.find(await crpRecordFilter(req))
       .populate("userId", "name phone hamlet street houseNo shg_name")
       .sort({ createdAt: -1 });
     res.json(demands);
@@ -57,6 +58,9 @@ router.get("/all", verifyToken, async (req, res) => {
 router.patch("/:id/complete", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    const existing = await ServiceDemand.findById(req.params.id, "userId");
+    if (!existing) return res.status(404).json({ message: "Demand not found" });
+    if (!(await canAccessFarmer(req, existing.userId))) return res.status(403).json({ message: "Forbidden" });
     const demand = await ServiceDemand.findByIdAndUpdate(
       req.params.id,
       { status: "Completed" },
@@ -73,6 +77,9 @@ router.patch("/:id/complete", verifyToken, async (req, res) => {
 router.patch("/:id/reject", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
+    const existing = await ServiceDemand.findById(req.params.id, "userId");
+    if (!existing) return res.status(404).json({ message: "Demand not found" });
+    if (!(await canAccessFarmer(req, existing.userId))) return res.status(403).json({ message: "Forbidden" });
     const demand = await ServiceDemand.findByIdAndUpdate(
       req.params.id,
       { status: "Rejected" },

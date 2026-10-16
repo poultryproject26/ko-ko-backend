@@ -18,6 +18,9 @@ import crpRoutes from "./routes/crps.js";
 import hamletRoutes from "./routes/hamlets.js";
 import streetRoutes from "./routes/streets.js";
 import vaccinationStockRoutes from "./routes/vaccinationStock.js";
+import adminRoutes from "./routes/admin.js";
+import adminReportRoutes from "./routes/adminReports.js";
+import adminAnnouncementRoutes from "./routes/adminAnnouncements.js";
 import { startNotificationScheduler } from "./utils/notificationScheduler.js";
 
 dotenv.config();
@@ -43,6 +46,9 @@ app.use("/api/crps", crpRoutes);
 app.use("/api/hamlets", hamletRoutes);
 app.use("/api/streets", streetRoutes);
 app.use("/api/vaccination-stock", vaccinationStockRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/admin/reports", adminReportRoutes);
+app.use("/api/admin/announcements", adminAnnouncementRoutes);
 
 startNotificationScheduler();
 

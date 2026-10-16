@@ -9,51 +9,11 @@ import { Download, FileText, ChevronDown, ChevronUp } from "lucide-react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import * as XLSX from "xlsx";
-import { Capacitor } from "@capacitor/core";
-import { Filesystem, Directory } from "@capacitor/filesystem";
-import { Share } from "@capacitor/share";
-import { toast } from "sonner";
-
-// Android's WebView doesn't support the Blob + <a download> convention that
-// XLSX.writeFile()/pdf.save() rely on, so on native platforms we write the
-// generated file to the app cache and hand it to the OS share sheet instead.
-async function saveAndShareNative(base64Data: string, filename: string) {
-  let fileUri: string;
-  try {
-    const result = await Filesystem.writeFile({
-      path: filename,
-      data: base64Data,
-      directory: Directory.Cache,
-    });
-    fileUri = result.uri;
-  } catch (error) {
-    console.error("[Report] Unable to save report file:", error);
-    toast.error("Unable to save the report. Please try again.");
-    return;
-  }
-
-  try {
-    await Share.share({ title: filename, url: fileUri });
-  } catch (error: any) {
-    // User dismissing the share sheet rejects the promise with "Share canceled" — not an error.
-    if (error?.message !== "Share canceled") {
-      console.error("[Report] Unable to share report file:", error);
-      toast.error("Unable to share the report. Please try again.");
-    }
-  }
-}
 
 function downloadExcel(headers: string[], rows: (string | number)[][], filename: string) {
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Report");
-
-  if (Capacitor.isNativePlatform()) {
-    const base64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
-    void saveAndShareNative(base64, `${filename}.xlsx`);
-    return;
-  }
-
   XLSX.writeFile(wb, `${filename}.xlsx`);
 }
 
@@ -102,13 +62,6 @@ async function downloadPDF(title: string, headers: string[], rows: (string | num
   const imgData = canvas.toDataURL("image/png");
   const pdf = new jsPDF({ orientation: canvas.width > canvas.height ? "landscape" : "portrait", unit: "px", format: [canvas.width / 2, canvas.height / 2] });
   pdf.addImage(imgData, "PNG", 0, 0, canvas.width / 2, canvas.height / 2);
-
-  if (Capacitor.isNativePlatform()) {
-    const base64 = pdf.output("datauristring").split(",")[1] ?? "";
-    await saveAndShareNative(base64, `${filename}.pdf`);
-    return;
-  }
-
   pdf.save(`${filename}.pdf`);
 }
 
@@ -148,31 +101,25 @@ function Section({ title, count, defaultOpen = true, children, onExcel, onPdf }:
   );
 }
 
-// Safe numeric coercion for totals — missing/null/non-numeric values contribute 0
-// rather than producing NaN in a sum.
-function num(value: any): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
-
 const CrpReportsTab = () => {
   const { t, lang } = useLanguage();
   const [farmers, setFarmers] = useState<any[]>([]);
   const [demands, setDemands] = useState<any[]>([]);
   const [diseaseReports, setDiseaseReports] = useState<any[]>([]);
+  const [vaccinations, setVaccinations] = useState<any[]>([]);
   const [birdUpdates, setBirdUpdates] = useState<any[]>([]);
   const [saleStocks, setSaleStocks] = useState<any[]>([]);
-  const [vaccinationStocks, setVaccinationStocks] = useState<any[]>([]);
 
   useEffect(() => {
     api.getFarmers().then(setFarmers).catch(() => {});
     api.getAllServiceDemands().then(setDemands).catch(() => {});
     api.getAllDiseaseReports().then(setDiseaseReports).catch(() => {});
+    api.getAllVaccinations().then(setVaccinations).catch(() => {});
     api.getAllBirdUpdates().then(setBirdUpdates).catch(() => {});
     api.getSaleStocks().then(setSaleStocks).catch(() => {});
-    api.getAllVaccinationStock().then(setVaccinationStocks).catch(() => {});
   }, []);
 
+  const today = new Date();
   const farmerName = (item: any) => item.userId?.name || item.farmerName || item.name || "-";
   const farmerPhone = (item: any) => item.userId?.phone || item.phone || "-";
   const farmerShg = (item: any) => item.userId?.shg_name || item.shg_name || "-";
@@ -203,13 +150,6 @@ const CrpReportsTab = () => {
   const demandHeadersTamil = ["வகை", "மொத்தம்", "நிலுவை", "நிறைவு", "நிராகரிப்பு"];
   const demandHeadersEn = ["Type", "Total", "Pending", "Completed", "Rejected"];
   const demandHeaders = lang === "en" ? demandHeadersEn : demandHeadersTamil;
-  // Grand total row — computed directly from `demands` (not from demandRows) so it
-  // doesn't depend on demandRows' column order.
-  const demandGrandTotal = demands.length;
-  const demandPendingTotal = demands.filter((d) => d.status === "Pending").length;
-  const demandCompletedTotal = demands.filter((d) => d.status === "Completed").length;
-  const demandRejectedTotal = demands.filter((d) => d.status === "Rejected").length;
-  const demandTotalsRow: (string | number)[] = [t("total"), demandGrandTotal, demandPendingTotal, demandCompletedTotal, demandRejectedTotal];
 
   const pendingDisease = diseaseReports.filter((r) => r.status === "Pending");
   const diseaseRows: (string | number)[][] = diseaseReports.map((r) => [...farmerInfoCells(r), formatDate(r.reportedAt), r.description, r.status]);
@@ -217,54 +157,31 @@ const CrpReportsTab = () => {
   const diseaseHeadersEn = [...farmerInfoHeadersEn, "Date", "Description", "Status"];
   const diseaseHeaders = lang === "en" ? diseaseHeadersEn : diseaseHeadersTamil;
 
-  const weeklyRows: (string | number)[][] = birdUpdates.map((u) => [
-    ...farmerInfoCells(u), formatDate(u.weekDate), u.chicks, u.layers,
-    u.chicks + u.layers,
+  const overdueVax = vaccinations.filter((v) => v.type !== "deworming" && new Date(v.nextDueDate) < today);
+  const overdueDew = vaccinations.filter((v) => v.type === "deworming" && new Date(v.nextDueDate) < today);
+  const vacRows: (string | number)[][] = vaccinations.map((v) => [
+    ...farmerInfoCells(v),
+    v.type === "deworming"
+      ? (lang === "en" ? "Deworming" : "குடற்புழு நீக்கம்")
+      : v.type === "smallpox"
+      ? (lang === "en" ? "Smallpox" : "அம்மை தடுப்பூசி")
+      : (lang === "en" ? "Ranikhet (RD)" : "வெள்ளை கழிச்சல்"),
+    formatDate(v.dateGiven), formatDate(v.nextDueDate),
+    new Date(v.nextDueDate) < today
+      ? (lang === "en" ? "Overdue" : "காலாவதி")
+      : (lang === "en" ? "OK" : "சரி"),
   ]);
-  const weeklyHeadersTamil = [...farmerInfoHeadersTamil, "வாரம்", "3 மாதத்திற்குள்", "3 மாதத்திற்கு மேல்", "மொத்தம்"];
-  const weeklyHeadersEn = [...farmerInfoHeadersEn, "Week", "Within 3 Months", "Above 3 Months", "Total"];
-  const weeklyHeaders = lang === "en" ? weeklyHeadersEn : weeklyHeadersTamil;
-  const weeklyChicksTotal = birdUpdates.reduce((s, u) => s + num(u.chicks), 0);
-  const weeklyLayersTotal = birdUpdates.reduce((s, u) => s + num(u.layers), 0);
-  const weeklyTotalsRow: (string | number)[] = [t("total"), "", "", "", "", weeklyChicksTotal, weeklyLayersTotal, weeklyChicksTotal + weeklyLayersTotal];
+  const vacHeadersTamil = [...farmerInfoHeadersTamil, "வகை", "கடைசி தேதி", "அடுத்த தேதி", "நிலை"];
+  const vacHeadersEn = [...farmerInfoHeadersEn, "Type", "Last Date", "Next Date", "Status"];
+  const vacHeaders = lang === "en" ? vacHeadersEn : vacHeadersTamil;
 
-  const vaccinationStockRows: (string | number)[][] = vaccinationStocks.map((s) => [
-    ...farmerInfoCells(s),
-    formatDate(s.updatedAt || s.entryDate),
-    s.withinMonth || 0,
-    s.month2 || 0,
-    s.month3 || 0,
-    s.month4Plus || 0,
-    (s.withinMonth || 0) + (s.month2 || 0) + (s.month3 || 0) + (s.month4Plus || 0),
+  const weeklyRows: (string | number)[][] = birdUpdates.map((u) => [
+    ...farmerInfoCells(u), formatDate(u.weekDate), u.chicks, u.growers, u.layers, u.broilers,
+    u.chicks + u.growers + u.layers + u.broilers,
   ]);
-  const vaccinationStockHeadersTamil = [
-    ...farmerInfoHeadersTamil,
-    "தேதி",
-    "1 மாதத்திற்குள்",
-    "2 மாத வயது",
-    "3 மாத வயது",
-    "4 மாதங்கள் மற்றும் அதற்கு மேல்",
-    "மொத்தம்",
-  ];
-  const vaccinationStockHeadersEn = [
-    ...farmerInfoHeadersEn,
-    "Date",
-    "Within 1 Month",
-    "2 Months",
-    "3 Months",
-    "4 Months & Above",
-    "Total",
-  ];
-  const vaccinationStockHeaders = lang === "en" ? vaccinationStockHeadersEn : vaccinationStockHeadersTamil;
-  const vaxWithinMonthTotal = vaccinationStocks.reduce((s, x) => s + num(x.withinMonth), 0);
-  const vaxMonth2Total = vaccinationStocks.reduce((s, x) => s + num(x.month2), 0);
-  const vaxMonth3Total = vaccinationStocks.reduce((s, x) => s + num(x.month3), 0);
-  const vaxMonth4PlusTotal = vaccinationStocks.reduce((s, x) => s + num(x.month4Plus), 0);
-  const vaccinationStockTotalsRow: (string | number)[] = [
-    t("total"), "", "", "", "",
-    vaxWithinMonthTotal, vaxMonth2Total, vaxMonth3Total, vaxMonth4PlusTotal,
-    vaxWithinMonthTotal + vaxMonth2Total + vaxMonth3Total + vaxMonth4PlusTotal,
-  ];
+  const weeklyHeadersTamil = [...farmerInfoHeadersTamil, "வாரம்", "குஞ்சு", "வளர்ச்சி", "முட்டை", "கறி", "மொத்தம்"];
+  const weeklyHeadersEn = [...farmerInfoHeadersEn, "Week", "Chick", "Growers", "Eggs", "Broilers", "Total"];
+  const weeklyHeaders = lang === "en" ? weeklyHeadersEn : weeklyHeadersTamil;
 
   const loans = demands.filter((d) => d.type === "Loan");
   const totalRequested = loans.reduce((s, d) => s + (d.amount || 0), 0);
@@ -275,20 +192,12 @@ const CrpReportsTab = () => {
   const loanHeadersTamil = [...farmerInfoHeadersTamil, "தொகை", "நோக்கம்", "நிலை", "தேதி"];
   const loanHeadersEn = [...farmerInfoHeadersEn, "Amount", "Purpose", "Status", "Date"];
   const loanHeaders = lang === "en" ? loanHeadersEn : loanHeadersTamil;
-  // Export-only totals row — reuses the existing totalRequested calculation above
-  // rather than re-summing loanRows. No on-screen table exists for loanRows; the
-  // stat tiles below already surface this total on screen.
-  const loanTotalsRow: (string | number)[] = [t("total"), "", "", "", totalRequested, "", "", ""];
 
   const soldStocks = saleStocks;
   const soldRows: (string | number)[][] = soldStocks.map((s) => [...farmerInfoCells(s), s.broilers, s.chicks, s.eggs, formatDate(s.createdAt), s.soldAt ? formatDate(s.soldAt) : "-", s.status === "sold" ? (lang === "en" ? "Sold" : "விற்பனையானது") : (lang === "en" ? "Ready for Sale" : "விற்பனைக்கு தயார்")]);
   const soldHeadersTamil = [...farmerInfoHeadersTamil, "கறிக்கோழி", "குஞ்சு", "முட்டை", "பதிவு தேதி", "விற்பனை தேதி", "நிலை"];
   const soldHeadersEn = [...farmerInfoHeadersEn, "Broiler Chicken", "Chick", "Egg", "Reg Date", "Sale Date", "Status"];
   const soldHeaders = lang === "en" ? soldHeadersEn : soldHeadersTamil;
-  const soldBroilersTotal = soldStocks.reduce((s, x) => s + num(x.broilers), 0);
-  const soldChicksTotal = soldStocks.reduce((s, x) => s + num(x.chicks), 0);
-  const soldEggsTotal = soldStocks.reduce((s, x) => s + num(x.eggs), 0);
-  const soldTotalsRow: (string | number)[] = [t("total"), "", "", "", soldBroilersTotal, soldChicksTotal, soldEggsTotal, "", "", ""];
 
   return (
     <div className="flex flex-col gap-4">
@@ -306,26 +215,24 @@ const CrpReportsTab = () => {
       </Section>
 
       <Section title={t("serviceDemandReport")} defaultOpen={true}
-        onExcel={() => downloadExcel(demandHeaders, [...demandRows, demandTotalsRow], "service_demands")}
-        onPdf={() => downloadPDF(t("serviceDemandReport"), demandHeaders, [...demandRows, demandTotalsRow], "service_demands")}>
+        onExcel={() => downloadExcel(demandHeaders, demandRows, "service_demands")}
+        onPdf={() => downloadPDF(t("serviceDemandReport"), demandHeaders, demandRows, "service_demands")}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="border-b border-border">{demandHeaders.map((h) => <th key={h} className="text-left py-2 px-1 text-muted-foreground font-medium">{h}</th>)}</tr></thead>
             <tbody>{demandRows.map((row, i) => (<tr key={i} className="border-b border-border/40"><td className="py-2 px-1 font-medium text-foreground">{row[0]}</td><td className="py-2 px-1 text-center">{row[1]}</td><td className="py-2 px-1 text-center text-warning font-bold">{row[2]}</td><td className="py-2 px-1 text-center text-success font-bold">{row[3]}</td><td className="py-2 px-1 text-center text-danger font-bold">{row[4]}</td></tr>))}</tbody>
-            <tfoot><tr className="border-t-2 border-border"><td className="py-2 px-1 font-bold text-foreground">{t("total")}</td><td className="py-2 px-1 text-center font-bold text-foreground">{demandGrandTotal}</td><td className="py-2 px-1 text-center text-warning font-bold">{demandPendingTotal}</td><td className="py-2 px-1 text-center text-success font-bold">{demandCompletedTotal}</td><td className="py-2 px-1 text-center text-danger font-bold">{demandRejectedTotal}</td></tr></tfoot>
           </table>
         </div>
       </Section>
 
       <Section title={lang === "en" ? "Requested Farmers List" : "கோரிக்கையாளர் பட்டியல்"} defaultOpen={false}
         onExcel={() => {
-          const listHeadersExcelTamil = ["வகை", "#", ...farmerInfoHeadersTamil, "விருப்பம்/உபவகை", "தொகை/அளவு", "நிலை", "தேதி"];
-          const listHeadersExcelEn = ["Type", "#", ...farmerInfoHeadersEn, "Option", "Amount/Qty", "Status", "Date"];
+          const listHeadersExcelTamil = ["வகை", "#", ...farmerInfoHeadersTamil, "தொகை/அளவு", "நிலை", "தேதி"];
+          const listHeadersExcelEn = ["Type", "#", ...farmerInfoHeadersEn, "Amount/Qty", "Status", "Date"];
           const listHeadersExcel = lang === "en" ? listHeadersExcelEn : listHeadersExcelTamil;
           const allRows: (string | number)[][] = demandTypes.flatMap((type) =>
             demands.filter((d) => d.type === type).map((d, i) => [
               type, i + 1, ...farmerInfoCells(d),
-              d.option || "-",
               d.type === "Loan" ? `₹${(d.amount || 0).toLocaleString()}` : (d.quantity || "-"),
               d.status, formatDate(d.createdAt),
             ])
@@ -333,15 +240,14 @@ const CrpReportsTab = () => {
           downloadExcel(listHeadersExcel, allRows, "demand_farmers_list");
         }}
         onPdf={async () => {
-          const listHeadersTamil = ["#", ...farmerInfoHeadersTamil, "விருப்பம்/உபவகை", "தொகை/அளவு", "நிலை", "தேதி"];
-          const listHeadersEn = ["#", ...farmerInfoHeadersEn, "Option", "Amount/Qty", "Status", "Date"];
+          const listHeadersTamil = ["#", ...farmerInfoHeadersTamil, "தொகை/அளவு", "நிலை", "தேதி"];
+          const listHeadersEn = ["#", ...farmerInfoHeadersEn, "Amount/Qty", "Status", "Date"];
           const listHeaders = lang === "en" ? listHeadersEn : listHeadersTamil;
           for (const type of demandTypes) {
             const list = demands.filter((d) => d.type === type);
             if (list.length === 0) continue;
             const rows = list.map((d, i) => [
               i + 1, ...farmerInfoCells(d),
-              d.option || "-",
               type === "Loan" ? `Rs.${(d.amount || 0).toLocaleString()}` : (d.quantity || "-"),
               d.status, formatDate(d.createdAt),
             ]);
@@ -371,7 +277,6 @@ const CrpReportsTab = () => {
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "SHG Name" : "SHG பெயர்"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Address" : "முகவரி"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Contact No" : "தொடர்பு எண்"}</th>
-                      <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Option" : "விருப்பம்/உபவகை"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Amount/Qty" : "தொகை/அளவு"}</th>
                       <th className="text-left py-1.5 px-1 text-muted-foreground">{lang === "en" ? "Status" : "நிலை"}</th>
                     </tr></thead>
@@ -383,7 +288,6 @@ const CrpReportsTab = () => {
                           <td className="py-1.5 px-1 text-foreground">{farmerShg(d)}</td>
                           <td className="py-1.5 px-1 text-foreground">{farmerAddress(d)}</td>
                           <td className="py-1.5 px-1 text-foreground">{farmerPhone(d)}</td>
-                          <td className="py-1.5 px-1 text-foreground">{d.option || "-"}</td>
                           <td className="py-1.5 px-1 text-foreground">{type === "Loan" ? `₹${(d.amount || 0).toLocaleString()}` : (d.quantity || "-")}</td>
                           <td className="py-1.5 px-1">
                             <span className={`font-semibold ${
@@ -420,37 +324,35 @@ const CrpReportsTab = () => {
         </div>
       </Section>
 
+      <Section title={t("vaccinationStatusReport")} count={overdueVax.length + overdueDew.length} defaultOpen={false}
+        onExcel={() => downloadExcel(vacHeaders, vacRows, "vaccination_status")}
+        onPdf={() => downloadPDF(t("vaccinationStatusReport"), vacHeaders, vacRows, "vaccination_status")}>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="bg-danger/10 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-danger">{overdueVax.length}</p>
+            <p className="text-xs text-muted-foreground">{lang === "en" ? "Vaccination Overdue" : "தடுப்பூசி காலாவதி"}</p>
+          </div>
+          <div className="bg-warning/10 rounded-lg p-3 text-center">
+            <p className="text-2xl font-bold text-warning">{overdueDew.length}</p>
+            <p className="text-xs text-muted-foreground">{lang === "en" ? "Deworming Overdue" : "குடற்புழு காலாவதி"}</p>
+          </div>
+        </div>
+      </Section>
+
       <Section title={t("weeklyHistoryReport")} defaultOpen={false}
-        onExcel={() => downloadExcel(weeklyHeaders, [...weeklyRows, weeklyTotalsRow], "weekly_history")}
-        onPdf={() => downloadPDF(t("weeklyHistoryReport"), weeklyHeaders, [...weeklyRows, weeklyTotalsRow], "weekly_history")}>
+        onExcel={() => downloadExcel(weeklyHeaders, weeklyRows, "weekly_history")}
+        onPdf={() => downloadPDF(t("weeklyHistoryReport"), weeklyHeaders, weeklyRows, "weekly_history")}>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead><tr className="border-b border-border">{weeklyHeaders.map((h) => <th key={h} className="text-left py-2 px-1 text-muted-foreground font-medium">{h}</th>)}</tr></thead>
-            <tbody>{weeklyRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 7 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
-            {weeklyRows.length > 0 && (
-              <tfoot><tr className="border-t-2 border-border">{weeklyTotalsRow.map((cell, j) => <td key={j} className={`py-2 px-1 font-bold ${j >= 5 ? "text-primary" : "text-foreground"}`}>{cell}</td>)}</tr></tfoot>
-            )}
+            <tbody>{weeklyRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 9 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
           </table>
         </div>
       </Section>
 
-      <Section title={lang === "en" ? "Vaccination Stock Report" : "தடுப்பூசி இருப்பு அறிக்கை"} count={vaccinationStocks.length} defaultOpen={false}
-        onExcel={() => downloadExcel(vaccinationStockHeaders, [...vaccinationStockRows, vaccinationStockTotalsRow], "vaccination_stock")}
-        onPdf={() => downloadPDF(lang === "en" ? "Vaccination Stock Report" : "தடுப்பூசி இருப்பு அறிக்கை", vaccinationStockHeaders, [...vaccinationStockRows, vaccinationStockTotalsRow], "vaccination_stock")}>
-        {vaccinationStocks.length === 0 ? <p className="text-sm text-muted-foreground">{t("noDataFound")}</p> : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead><tr className="border-b border-border">{vaccinationStockHeaders.map((h) => <th key={h} className="text-left py-2 px-1 text-muted-foreground font-medium">{h}</th>)}</tr></thead>
-              <tbody>{vaccinationStockRows.map((row, i) => (<tr key={i} className="border-b border-border/40">{row.map((cell, j) => <td key={j} className={`py-2 px-1 ${j === 9 ? "font-bold text-primary" : "text-foreground"}`}>{cell}</td>)}</tr>))}</tbody>
-              <tfoot><tr className="border-t-2 border-border">{vaccinationStockTotalsRow.map((cell, j) => <td key={j} className={`py-2 px-1 font-bold ${j >= 5 ? "text-primary" : "text-foreground"}`}>{cell}</td>)}</tr></tfoot>
-            </table>
-          </div>
-        )}
-      </Section>
-
       <Section title={t("loanSummaryReport")} count={loans.length} defaultOpen={false}
-        onExcel={() => downloadExcel(loanHeaders, [...loanRows, loanTotalsRow], "loan_summary")}
-        onPdf={() => downloadPDF(t("loanSummaryReport"), loanHeaders, [...loanRows, loanTotalsRow], "loan_summary")}>
+        onExcel={() => downloadExcel(loanHeaders, loanRows, "loan_summary")}
+        onPdf={() => downloadPDF(t("loanSummaryReport"), loanHeaders, loanRows, "loan_summary")}>
         <div className="grid grid-cols-2 gap-2 mb-3">
           <div className="bg-muted/40 rounded-lg p-3 text-center">
             <p className="text-lg font-bold text-foreground">₹{totalRequested.toLocaleString()}</p>
@@ -472,8 +374,8 @@ const CrpReportsTab = () => {
       </Section>
 
       <Section title={t("saleStockHistoryReport")} count={soldStocks.length} defaultOpen={false}
-        onExcel={() => downloadExcel(soldHeaders, [...soldRows, soldTotalsRow], "sold_stocks")}
-        onPdf={() => downloadPDF(t("saleStockHistoryReport"), soldHeaders, [...soldRows, soldTotalsRow], "sold_stocks")}>
+        onExcel={() => downloadExcel(soldHeaders, soldRows, "sold_stocks")}
+        onPdf={() => downloadPDF(t("saleStockHistoryReport"), soldHeaders, soldRows, "sold_stocks")}>
         {soldStocks.length === 0 ? <p className="text-sm text-muted-foreground">{t("noDataFound")}</p> : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -498,18 +400,6 @@ const CrpReportsTab = () => {
                   </td>
                 </tr>
               ))}</tbody>
-              <tfoot><tr className="border-t-2 border-border">
-                <td className="py-2 px-1 font-bold text-foreground">{t("total")}</td>
-                <td className="py-2 px-1"></td>
-                <td className="py-2 px-1"></td>
-                <td className="py-2 px-1"></td>
-                <td className="py-2 px-1 font-bold text-primary">{soldBroilersTotal}</td>
-                <td className="py-2 px-1 font-bold text-primary">{soldChicksTotal}</td>
-                <td className="py-2 px-1 font-bold text-primary">{soldEggsTotal}</td>
-                <td className="py-2 px-1"></td>
-                <td className="py-2 px-1"></td>
-                <td className="py-2 px-1"></td>
-              </tr></tfoot>
             </table>
           </div>
         )}
