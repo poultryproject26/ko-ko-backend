@@ -4,6 +4,7 @@ import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
 import { notifyUsers, getUsersByRole } from "../utils/notificationService.js";
 import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
+import { CORRECT_VACCINATION_REMINDER_FINAL_SENTENCE } from "../utils/vaccinationReminderWording.js";
 
 const router = express.Router();
 
@@ -86,7 +87,7 @@ router.post("/", verifyToken, async (req, res) => {
     const farmerMsg =
       `💉 தடுப்பூசி தேதி: ${vaccinationDateStr}\n` +
       lines.join("\n") +
-      `\n\nதடுப்பூசி போட வேண்டிய கோழிகளை இந்நாள் அடைவாக வையுங்கள்.`;
+      `\n\n${CORRECT_VACCINATION_REMINDER_FINAL_SENTENCE}`;
 
     const farmerId = req.user.userId;
     const crpIds = await getUsersByRole(["CRP"]);
