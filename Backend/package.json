@@ -6,7 +6,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "seed": "node scripts/seed.js",
-    "migrate": "node scripts/migrate.js"
+    "migrate": "node scripts/migrate.js",
+    "test": "node --test utils/vaccinationReminderWording.test.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
