@@ -9,7 +9,7 @@ const HAMLET_MAP = {
   "Namakkal": { nameTa: "நாமக்கல்", nameEn: "Namakkal" },
   "காட்டூர்": { nameTa: "காட்டூர்", nameEn: "Kattur" },
   "Mohanur": { nameTa: "மோகனூர்", nameEn: "Mohanur" },
-  "Konangipatti": { nameTa: "கோணங்கிபட்டி", nameEn: "Konangipatti" },
+  "Konangipatti": { nameTa: "கோணாங்கிபட்டி", nameEn: "Konangipatti" },
   "Mallasamudram": { nameTa: "மல்லசமுத்திரம்", nameEn: "Mallasamudram" },
   "Pallipalayam": { nameTa: "பள்ளிபாளையம்", nameEn: "Pallipalayam" },
 };

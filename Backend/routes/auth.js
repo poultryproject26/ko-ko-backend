@@ -314,6 +314,50 @@ router.post("/seed-crp", verifyToken, requireAdmin, async (req, res) => {
   }
 });
 
+// PATCH /api/auth/change-password — authenticated self-service PIN change for
+// all roles (Farmer, CRP, Admin). The target user is derived exclusively from
+// the verified JWT; no client-supplied user ID is accepted. Rate-limiting
+// reuses the same in-memory map as /login, keyed on IP + the user's own phone
+// so that repeated wrong-current-PIN attempts are throttled consistently.
+router.patch("/change-password", verifyToken, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!isValidPin(currentPassword) || !isValidPin(newPassword)) {
+      return res.status(400).json({ message: "Both PINs must be exactly 4 digits" });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ message: "New PIN must differ from the current PIN" });
+    }
+
+    // Fetch the user's phone for rate-limit keying, then check the limit.
+    const userForPhone = await User.findById(req.user.userId, "phone");
+    if (!userForPhone) return res.status(404).json({ message: "User not found" });
+
+    const limit = checkLoginLimit(req, res, userForPhone.phone);
+    if (limit.limited) return;
+
+    const user = await User.findById(req.user.userId).select("+password");
+    if (!user || !user.password) {
+      recordFailedLogin(limit.key, limit.state);
+      return res.status(401).json({ message: "Current PIN is incorrect" });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, user.password);
+    if (!valid) {
+      recordFailedLogin(limit.key, limit.state);
+      return res.status(401).json({ message: "Current PIN is incorrect" });
+    }
+
+    loginAttempts.delete(limit.key);
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "An unexpected error occurred" });
+  }
+});
+
 // PATCH /api/auth/profile — farmer updates own profile
 router.patch("/profile", verifyToken, async (req, res) => {
   try {

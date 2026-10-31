@@ -3,7 +3,6 @@ import Vaccination from "../models/Vaccination.js";
 import BirdBatch from "../models/BirdBatch.js";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
-import { generateSchedule } from "../utils/scheduleEngine.js";
 import { notifyUsers, notifyUsersByRole, getUsersByRole } from "../utils/notificationService.js";
 import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
 
@@ -17,38 +16,6 @@ async function guardRecord(req, res, Model, id, notFoundMessage) {
 }
 
 const router = express.Router();
-
-function buildScheduleResult(schedule, dbRecords) {
-  const today = new Date();
-  return schedule.map((e) => {
-    const eDate = new Date(e.scheduledDate);
-    eDate.setHours(0, 0, 0, 0);
-
-    const dbRecord = dbRecords.find((r) => {
-      if (!r.scheduledDate) return false;
-      const rDate = new Date(r.scheduledDate);
-      rDate.setHours(0, 0, 0, 0);
-      return r.type === e.type && rDate.getTime() === eDate.getTime();
-    });
-
-    if (dbRecord) {
-      return {
-        ...e,
-        _id: dbRecord._id,
-        status: dbRecord.status,
-        completedDate: dbRecord.completedDate,
-        completedBy: dbRecord.completedBy,
-        rescheduledDate: dbRecord.rescheduledDate,
-        notes: dbRecord.notes,
-      };
-    }
-
-    return {
-      ...e,
-      status: eDate < today ? "overdue" : "scheduled",
-    };
-  });
-}
 
 // ── Batch management ──────────────────────────────────────────────────────────
 
@@ -95,7 +62,7 @@ router.get("/batches/all", verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/vaccinations/batches — CRP creates a batch and generates schedule
+// POST /api/vaccinations/batches — CRP creates a batch without auto-generating events
 router.post("/batches", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
@@ -111,21 +78,7 @@ router.post("/batches", verifyToken, async (req, res) => {
       batchDate: new Date(batchDate),
     });
 
-    const events = generateSchedule(batchDate);
-    const records = events.map((e) => ({
-      userId,
-      batchId: batch._id,
-      type: e.type,
-      label: e.label,
-      scheduledDate: e.scheduledDate,
-      dateGiven: e.scheduledDate,   // keep legacy field populated
-      nextDueDate: e.scheduledDate, // keep legacy field populated
-      status: "scheduled",
-      isAutoScheduled: true,
-    }));
-    await Vaccination.insertMany(records, { ordered: false, rawResult: false });
-
-    res.status(201).json({ batch, scheduleCount: records.length });
+    res.status(201).json({ batch, scheduleCount: 0 });
   } catch (err) {
     console.error("POST /batches error:", err.message, err.errors);
     res.status(500).json({ error: err.message, details: err.errors });
@@ -212,23 +165,22 @@ router.patch("/batches/:batchId/mortality", verifyToken, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-// ── Schedule views ────────────────────────────────────────────────────────────
+// ── Stored vaccination records grouped by batch ───────────────────────────────
 
-// GET /api/vaccinations/schedule/me — farmer sees all active batches + schedules
+// GET /api/vaccinations/schedule/me — farmer sees existing records for active batches
 router.get("/schedule/me", verifyToken, async (req, res) => {
   try {
     const batches = await BirdBatch.find({ userId: req.user.userId, batchStatus: "active" });
     if (!batches.length) return res.json([]);
 
     const result = await Promise.all(batches.map(async (batch) => {
-      const schedule = generateSchedule(batch.batchDate);
-      const dbRecords = await Vaccination.find({ batchId: batch._id });
+      const schedule = await Vaccination.find({ batchId: batch._id }).sort({ scheduledDate: 1, dateGiven: 1 });
       return {
         batchId: batch._id,
         batchName: batch.batchName || "Batch 1",
         numberOfChicks: batch.numberOfChicks,
         batchDate: batch.batchDate,
-        schedule: buildScheduleResult(schedule, dbRecords),
+        schedule,
       };
     }));
 
@@ -238,7 +190,7 @@ router.get("/schedule/me", verifyToken, async (req, res) => {
   }
 });
 
-// GET /api/vaccinations/schedule/:farmerId — CRP sees a farmer's all batches
+// GET /api/vaccinations/schedule/:farmerId — CRP sees stored records for a farmer's batches
 router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
   try {
     if (!(await canReadFarmer(req))) return res.status(403).json({ message: "Forbidden" });
@@ -246,8 +198,7 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
     if (!batches.length) return res.json([]);
 
     const result = await Promise.all(batches.map(async (batch) => {
-      const schedule = generateSchedule(batch.batchDate);
-      const dbRecords = await Vaccination.find({ batchId: batch._id });
+      const schedule = await Vaccination.find({ batchId: batch._id }).sort({ scheduledDate: 1, dateGiven: 1 });
       return {
         batchId: batch._id,
         batchName: batch.batchName || "Batch 1",
@@ -256,7 +207,7 @@ router.get("/schedule/:farmerId", verifyToken, async (req, res) => {
         mortalityCount: batch.mortalityCount,
         batchDate: batch.batchDate,
         batchStatus: batch.batchStatus,
-        schedule: buildScheduleResult(schedule, dbRecords),
+        schedule,
       };
     }));
 

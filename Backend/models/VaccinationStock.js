@@ -7,6 +7,7 @@ const vaccinationStockSchema = new mongoose.Schema({
   month3:      { type: Number, default: 0 },
   month4Plus:  { type: Number, default: 0 },
   entryDate:   { type: Date, default: Date.now },
+  dueDate:     { type: Date },
   status: {
     type: String,
     enum: ["pending", "completed"],

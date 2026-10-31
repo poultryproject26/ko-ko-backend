@@ -24,7 +24,7 @@ const HAMLET_NAME_TA = {
   "Mohanur":       "மோகனூர்",
   "Mallasamudram": "மல்லசமுத்திரம்",
   "Pallipalayam":  "பள்ளிபாளையம்",
-  "Konangipatti":  "கோணாங்கிப்பட்டி",
+  "Konangipatti":  "கோணாங்கிபட்டி",
 };
 
 async function seed() {

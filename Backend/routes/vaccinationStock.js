@@ -2,8 +2,9 @@ import express from "express";
 import VaccinationStock from "../models/VaccinationStock.js";
 import User from "../models/User.js";
 import { verifyToken } from "../middleware/auth.js";
-import { notifyUsers, getUsersByRole } from "../utils/notificationService.js";
+import { notifyUsers } from "../utils/notificationService.js";
 import { crpRecordFilter, canAccessFarmer } from "../utils/crpScope.js";
+import { addKolkataCalendarDaysAsUtcDate, formatUtcCalendarDate } from "../utils/vaccinationDates.js";
 
 const router = express.Router();
 
@@ -14,24 +15,19 @@ export const CATEGORY_MAP = [
   { key: "month3",      labelEn: "3 months old",       labelTa: "3 மாத வயது",                   vaccine: "Infectious Coryza" },
   { key: "month4Plus",  labelEn: "4–7 months & above", labelTa: "4 முதல் 7 மாதங்கள் மற்றும் மேல்", vaccine: "RDVK + Deworming (3 மாதத்திற்கு ஒருமுறை)" },
 ];
-
-function formatDateDDMMYYYY(date) {
-  const d = new Date(date);
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
-}
-
-function addDays(date, days) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + days);
-  return d;
-}
+export const VACCINATION_REMINDER_FINAL_SENTENCE =
+  "தடுப்பூசி போட வேண்டிய கோழிகளை இந்நாளில் அடைத்து வைக்கவும்.";
 
 // GET /api/vaccination-stock/all — CRP: all farmer stocks
 router.get("/all", verifyToken, async (req, res) => {
   try {
     if (req.user.role !== "CRP") return res.status(403).json({ message: "Forbidden" });
     const stocks = await VaccinationStock.find(await crpRecordFilter(req))
-      .populate("userId", "name phone hamlet street houseNo shg_name")
+      .populate({
+        path: "userId",
+        select: "name phone hamlet hamletId street houseNo shg_name",
+        populate: { path: "hamletId", select: "name nameTa nameEn" },
+      })
       .sort({ updatedAt: -1 });
     res.json(stocks);
   } catch (err) {
@@ -49,14 +45,14 @@ router.get("/", verifyToken, async (req, res) => {
   }
 });
 
-// POST /api/vaccination-stock — farmer submits stock; sends notification with vax date = entry + 3 days
+// POST /api/vaccination-stock — farmer submits a request with a three-day deadline
 router.post("/", verifyToken, async (req, res) => {
   try {
     const { withinMonth, month2, month3, month4Plus } = req.body;
 
     const entryDate = new Date();
-    const vaccinationDate = addDays(entryDate, 3);
-    const vaccinationDateStr = formatDateDDMMYYYY(vaccinationDate);
+    const dueDate = addKolkataCalendarDaysAsUtcDate(entryDate, 3);
+    const dueDateStr = formatUtcCalendarDate(dueDate);
 
     const stock = await VaccinationStock.findOneAndUpdate(
       { userId: req.user.userId },
@@ -67,7 +63,10 @@ router.post("/", verifyToken, async (req, res) => {
         month3:      month3      || 0,
         month4Plus:  month4Plus  || 0,
         entryDate,
+        dueDate,
         status: "pending",
+        completedAt: null,
+        completedBy: null,
         lastProgressedAt: entryDate,
         updatedAt: entryDate,
       },
@@ -82,14 +81,11 @@ router.post("/", verifyToken, async (req, res) => {
         const vaccineLabel = c.vaccine ? ` (${c.vaccine})` : "";
         return `${c.labelTa}${vaccineLabel}: ${counts[c.key]} கோழிகள்`;
       });
-
     const farmerMsg =
-      `💉 தடுப்பூசி தேதி: ${vaccinationDateStr}\n` +
+      `💉 தடுப்பூசி காலக்கெடு: ${dueDateStr}\n` +
       lines.join("\n") +
-      `\n\nதடுப்பூசி போட வேண்டிய கோழிகளை இந்நாளில் அடைத்து வைக்கவும்.`;
-
+      `\n\n${VACCINATION_REMINDER_FINAL_SENTENCE}`;
     const farmerId = req.user.userId;
-    const crpIds = await getUsersByRole(["CRP"]);
 
     // Include the farmer's name in the CRP-facing title/message so that two
     // different farmers submitting identical category/count data on the same
@@ -97,28 +93,32 @@ router.post("/", verifyToken, async (req, res) => {
     // (notificationService.js) keys only on {type, title, message, day} with no
     // recipient check, so identical content would otherwise silently suppress
     // the second farmer's CRP alert even though their stock record was saved.
-    const farmerDoc = await User.findById(farmerId).select("name");
+    const farmerDoc = await User.findById(farmerId).select("name crpId");
     const farmerLabel = farmerDoc?.name || "விவசாயி";
+    const assignedCrpUsers = farmerDoc?.crpId
+      ? await User.find({ role: "CRP", crpProfileId: farmerDoc.crpId }, "_id").lean()
+      : [];
+    const crpIds = assignedCrpUsers.map((crp) => crp._id.toString());
 
     const crpMsg =
-      `💉 ${farmerLabel} தடுப்பூசி இருப்பு பதிவு செய்தார். தேதி: ${vaccinationDateStr}\n` +
+      `💉 ${farmerLabel} தடுப்பூசி இருப்பு பதிவு செய்தார். காலக்கெடு: ${dueDateStr}\n` +
       lines.join("\n");
 
     // Notify farmer
     await notifyUsers([farmerId], {
       type: "vaccination_stock_reminder",
-      title: `தடுப்பூசி தேதி: ${vaccinationDateStr}`,
+      title: `தடுப்பூசி காலக்கெடு: ${dueDateStr}`,
       message: farmerMsg,
-      payload: { vaccinationDate: vaccinationDate.toISOString(), stockId: stock._id.toString() },
+      payload: { dueDate: dueDate.toISOString(), stockId: stock._id.toString() },
     });
 
     // Notify CRP
     if (crpIds.length) {
       await notifyUsers(crpIds, {
         type: "vaccination_stock_reminder",
-        title: `விவசாயி தடுப்பூசி இருப்பு — ${farmerLabel} — ${vaccinationDateStr}`,
+        title: `விவசாயி தடுப்பூசி இருப்பு — ${farmerLabel} — ${dueDateStr}`,
         message: crpMsg,
-        payload: { vaccinationDate: vaccinationDate.toISOString(), stockId: stock._id.toString(), farmerId },
+        payload: { dueDate: dueDate.toISOString(), stockId: stock._id.toString(), farmerId },
       });
     }
 
@@ -146,7 +146,11 @@ router.patch("/:id/complete", verifyToken, async (req, res) => {
         updatedAt: new Date(),
       },
       { new: true }
-    ).populate("userId", "name phone hamlet");
+    ).populate({
+      path: "userId",
+      select: "name phone hamlet hamletId",
+      populate: { path: "hamletId", select: "name nameTa nameEn" },
+    });
 
     if (!stock) return res.status(404).json({ message: "Not found" });
 
