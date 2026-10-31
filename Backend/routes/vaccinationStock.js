@@ -86,7 +86,7 @@ router.post("/", verifyToken, async (req, res) => {
     const farmerMsg =
       `💉 தடுப்பூசி தேதி: ${vaccinationDateStr}\n` +
       lines.join("\n") +
-      `\n\nதடுப்பூசி போட வேண்டிய கோழிகளை இந்நாள் அடைவாக வையுங்கள்.`;
+      `\n\nதடுப்பூசி போட வேண்டிய கோழிகளை இந்நாளில் அடைத்து வைக்கவும்.`;
 
     const farmerId = req.user.userId;
     const crpIds = await getUsersByRole(["CRP"]);
