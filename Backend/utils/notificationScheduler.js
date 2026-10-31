@@ -4,6 +4,7 @@ import User from "../models/User.js";
 import VaccinationStock from "../models/VaccinationStock.js";
 import Notification from "../models/Notification.js";
 import { notifyUsers, notifyUsersByRole, retryFailedNotifications } from "./notificationService.js";
+import { VACCINATION_REMINDER_FINAL_SENTENCE } from "./vaccinationReminderWording.js";
 
 function normalizeDate(date) {
   const d = new Date(date);
@@ -121,7 +122,7 @@ async function runDailyCheck() {
         await notifyUsers([farmer._id.toString()], {
           type: "vaccination_stock_reminder",
           title: "Vaccination Stock Update",
-          message: "தயவுசெய்து உங்கள் தடுப்பூசி இருப்பு விவரங்களை சமர்ப்பிக்கவும் (2 வாரங்களுக்கு ஒருமுறை) / Please submit your vaccination stock update (once in 2 weeks)",
+          message: `தயவுசெய்து உங்கள் தடுப்பூசி இருப்பு விவரங்களை சமர்ப்பிக்கவும் (2 வாரங்களுக்கு ஒருமுறை).\n\n${VACCINATION_REMINDER_FINAL_SENTENCE}`,
           payload: { userId: farmer._id.toString() },
         });
       }
