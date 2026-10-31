@@ -4,7 +4,7 @@ import User from "../models/User.js";
 import VaccinationStock from "../models/VaccinationStock.js";
 import Notification from "../models/Notification.js";
 import { notifyUsers, notifyUsersByRole, retryFailedNotifications } from "./notificationService.js";
-import { VACCINATION_REMINDER_FINAL_SENTENCE } from "./vaccinationReminderWording.js";
+import { CORRECT_VACCINATION_REMINDER_FINAL_SENTENCE as VACCINATION_REMINDER_FINAL_SENTENCE } from "./vaccinationReminderWording.js";
 
 function normalizeDate(date) {
   const d = new Date(date);
