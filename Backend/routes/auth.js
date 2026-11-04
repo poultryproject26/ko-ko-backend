@@ -433,4 +433,34 @@ router.patch("/profile", verifyToken, async (req, res) => {
   }
 });
 
+// POST /api/auth/create-admin — one-time admin creation, protected by SEED_SECRET
+router.post("/create-admin", async (req, res) => {
+  try {
+    const { secret, phone, name, password } = req.body;
+    if (secret !== process.env.SEED_SECRET) return res.status(403).json({ message: "Forbidden" });
+    if (!isValidPhone(phone) || !isValidPin(password)) return res.status(400).json({ message: "Invalid phone or PIN" });
+
+    const existing = await User.findOne({ phone });
+    if (existing) {
+      existing.name = name || "admin";
+      existing.role = "ADMIN";
+      existing.approved = true;
+      existing.password = await bcrypt.hash(password, 10);
+      await existing.save();
+      return res.json({ success: true, message: "Admin user updated" });
+    }
+
+    await User.create({
+      name: name || "admin",
+      phone,
+      password: await bcrypt.hash(password, 10),
+      role: "ADMIN",
+      approved: true,
+    });
+    res.json({ success: true, message: "Admin user created" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
