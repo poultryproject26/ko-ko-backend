@@ -145,7 +145,8 @@ router.post("/password-status", async (req, res) => {
     const { phone } = req.body;
     if (!isValidPhone(phone)) return res.status(400).json({ message: "Valid phone required" });
     const user = await User.findOne({ phone }, "password");
-    res.json({ setupRequired: Boolean(user && !user.password) });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ setupRequired: Boolean(!user.password) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -168,23 +169,25 @@ router.post("/send-otp", async (req, res) => {
   }
 });
 
-// POST /api/auth/setup-password - first-time password setup after OTP proof.
+// POST /api/auth/setup-password - first-time password setup. OTP is optional.
 router.post("/setup-password", async (req, res) => {
   try {
     const { phone, otp, password } = req.body;
-    if (!isValidPhone(phone) || typeof otp !== "string" || !isValidPin(password)) {
+    if (!isValidPhone(phone) || !isValidPin(password)) {
       return res.status(400).json({ message: "Invalid setup request" });
     }
 
-    const record = await Otp.findOne({ phone, code: otp, used: false });
-    if (!record || record.expiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
+    // Validate OTP only when one is supplied
+    if (otp) {
+      const record = await Otp.findOne({ phone, code: otp, used: false });
+      if (!record || record.expiresAt < new Date()) return res.status(400).json({ message: "Invalid or expired OTP" });
+      record.used = true;
+      await record.save();
+    }
 
     const user = await User.findOne({ phone });
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.password) return res.status(409).json({ message: "Password is already set" });
-
-    record.used = true;
-    await record.save();
 
     user.password = await bcrypt.hash(password, 10);
     await user.save();
