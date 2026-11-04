@@ -22,10 +22,14 @@ const CrpApproveFarmersTab = () => {
   const pendingFarmers = farmers;
 
   const handle = async (id: string, action: "approved" | "rejected") => {
-    if (action === "approved") await api.approveFarmer(id);
-    else await api.rejectFarmer(id);
-    setFarmers((prev) => prev.filter((f) => f._id !== id));
-    toast.success(action === "approved" ? "✅ விவசாயி அனுமதிக்கப்பட்டார்" : "❌ விவசாயி நிராகரிக்கப்பட்டார்");
+    try {
+      if (action === "approved") await api.approveFarmer(id);
+      else await api.rejectFarmer(id);
+      setFarmers((prev) => prev.filter((f) => f._id !== id));
+      toast.success(action === "approved" ? "✅ விவசாயி அனுமதிக்கப்பட்டார்" : "❌ விவசாயி நிராகரிக்கப்பட்டார்");
+    } catch (err) {
+      toast.error((err as { message?: string })?.message || "Failed");
+    }
   };
 
   return (

@@ -36,8 +36,17 @@ const ChooseActionScreen = ({ onRegister, onLogin }: ChooseActionScreenProps) =>
           </button>
         </div>
 
-        <div className="w-20 h-20 rounded-full bg-white/20 border-4 border-white/40 flex items-center justify-center mb-4 shadow-lg overflow-hidden">
-          <img src="/logo.png" alt="Logo" className="w-full h-full object-cover rounded-full" />
+        {/* Logo row: TANUVAS | KO-KO | VCRI Namakkal */}
+        <div className="flex items-center justify-center gap-4 min-[360px]:gap-6 mb-4">
+          <div className="w-[72px] h-[72px] min-[360px]:w-[84px] min-[360px]:h-[84px] shrink-0 rounded-full bg-white border-2 border-white/40 p-0.5 shadow-lg overflow-hidden">
+            <img src="/logo-tanuvas.jpeg" alt="Tamil Nadu Veterinary and Animal Sciences University" className="w-full h-full object-contain rounded-full" />
+          </div>
+          <div className="w-[72px] h-[72px] min-[360px]:w-[84px] min-[360px]:h-[84px] shrink-0 rounded-full bg-white/20 border-4 border-white/40 flex items-center justify-center shadow-lg overflow-hidden">
+            <img src="/logo.png" alt="Logo" className="w-full h-full object-cover rounded-full" />
+          </div>
+          <div className="w-[72px] h-[72px] min-[360px]:w-[84px] min-[360px]:h-[84px] shrink-0 rounded-full bg-white border-2 border-white/40 p-0.5 shadow-lg overflow-hidden">
+            <img src="/logo-vcri-namakkal.jpeg" alt="Veterinary College and Research Institute, Namakkal" className="w-full h-full object-contain rounded-full" />
+          </div>
         </div>
         <h1 className="text-2xl font-bold text-white leading-tight tracking-wide">{t("appNameTamil")}</h1>
         <p className="text-sm text-white/80 mt-1.5 font-medium">{t("appTagline")}</p>

@@ -27,12 +27,12 @@ const CrpShareStockTab = () => {
     `🐣 குஞ்சுகள்: ${stock.chicks}\n` +
     `🐔 வளர் பருவம்: ${stock.growers}\n` +
     `🥚 வளர்ந்த கோழிகள்: ${stock.layers}\n` +
-    `🍗 கறிக்கோழி: ${stock.broilers}\n` +
+    `🍗 நாட்டுக்கோழி: ${stock.broilers}\n` +
     `📦 மொத்தம்: ${stock.total}\n\n` +
     `💰 இன்றைய விலை:\n` +
-    `கறிக்கோழி: ₹${broilerPrice}/kg\n` +
-    `குஞ்சுகள்: ₹${chickPrice}/குஞ்சு\n` +
-    `முட்டை: ₹${eggPrice}/முட்டை`;
+    `நாட்டுக்கோழி: ₹${broilerPrice}/kg\n` +
+    `நாட்டுக்கோழி குஞ்சுகள்: ₹${chickPrice}/குஞ்சு\n` +
+    `நாட்டுக்கோழி முட்டை: ₹${eggPrice}/முட்டை`;
 
   const handleShareGeneral = () => {
     window.open(`https://wa.me/?text=${encodeURIComponent(stockMessage)}`, "_blank");
@@ -53,7 +53,7 @@ const CrpShareStockTab = () => {
           <span>🐣 குஞ்சுகள்: {stock.chicks}</span>
           <span>🐔 வளர் பருவம்: {stock.growers}</span>
           <span>🥚 வளர்ந்தவை: {stock.layers}</span>
-          <span>🍗 கறிக்கோழி: {stock.broilers}</span>
+          <span>🍗 நாட்டுக்கோழி: {stock.broilers}</span>
         </div>
         <p className="text-base font-bold mt-3">மொத்தம்: {stock.total}</p>
         <p className="text-xs mt-1 opacity-90">

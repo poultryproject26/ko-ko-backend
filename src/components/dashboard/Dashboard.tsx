@@ -1,30 +1,47 @@
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { User, clearUser } from "@/lib/auth";
-import { Home, ClipboardList, Bug, Bell, LogOut, IndianRupee, Syringe } from "lucide-react";
+import { Home, ClipboardList, Bell, LogOut, IndianRupee, UserCircle } from "lucide-react";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import HomeTab from "./HomeTab";
 import WeeklyUpdateTab from "./WeeklyUpdateTab";
 import DiseaseReportTab from "./DiseaseReportTab";
 import NotificationsTab from "./NotificationsTab";
-import VaccinationHistoryTab from "./VaccinationHistoryTab";
 import MarketPricesTab from "./MarketPricesTab";
 import LoanRequestTab from "./LoanRequestTab";
 import ServiceRequestTab from "./ServiceRequestTab";
-import VaccinationStockTab from "./VaccinationStockTab";
+import ProfileTab from "./ProfileTab";
 
 interface DashboardProps {
   user: User;
   onLogout: () => void;
 }
 
-type Tab = "home" | "weekly" | "disease" | "history" | "prices" | "notifications" | "loan" | "vacstock";
+type Tab = "home" | "weekly" | "disease" | "prices" | "notifications" | "loan" | "profile";
 
-const Dashboard = ({ user, onLogout }: DashboardProps) => {
+const Dashboard = ({ user: initialUser, onLogout }: DashboardProps) => {
   const { t, lang, setLang } = useLanguage();
   const [tab, setTab] = useState<Tab>("home");
   const [notifCount, setNotifCount] = useState(0);
   const [loanCount, setLoanCount] = useState(0);
+  const [user, setCurrentUser] = useState<User>(initialUser);
+
+  // Weekly reminder on Fridays + monthly vaccination reminder on 1st
+  useEffect(() => {
+    const day = new Date().getDay(); // 5 = Friday
+    const date = new Date().getDate();
+    if (day === 5) {
+      api.checkWeekSubmitted().then((res) => {
+        if (!res?.submitted) {
+          setTimeout(() => toast("📋 இன்று வெள்ளிக்கிழமை — வாராந்திர இருப்பு பதிவு செய்யவும்!", { duration: 6000 }), 2000);
+        }
+      }).catch(() => {});
+    }
+    if (date === 1) {
+      setTimeout(() => toast("💉 மாத தொடக்கம் — கோழிகளுக்கான தடுப்பூசி தேவை பதிவு செய்யவும்!", { duration: 6000 }), 3000);
+    }
+  }, []);
 
   useEffect(() => {
     api.getNotifications().then((n) => {
@@ -33,8 +50,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
       setNotifCount(unseen.length);
     }).catch(() => {});
     api.getServiceDemands().then((d: any[]) => {
-      const seenKey = "seen_actioned_demands";
-      const seen: string[] = JSON.parse(localStorage.getItem(seenKey) || "[]");
+      const seen: string[] = JSON.parse(localStorage.getItem("seen_actioned_demands") || "[]");
       const actioned = d.filter((s) =>
         (s.status === "Completed" || s.status === "Rejected") && !seen.includes(s._id)
       );
@@ -68,11 +84,11 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
   };
 
   const tabs: { key: Tab; icon: typeof Home; label: string }[] = [
-    { key: "home",          icon: Home,         label: t("home") },
-    { key: "weekly",        icon: ClipboardList, label: t("weeklyUpdate") },
-    { key: "vacstock",      icon: Syringe,       label: lang === "ta" ? "தடுப்பூசி" : "Vacc. Stock" },
-    { key: "loan",          icon: IndianRupee,   label: t("services") },
-    { key: "notifications", icon: Bell,          label: t("notifications") },
+    { key: "home",          icon: Home,        label: t("home") },
+    { key: "weekly",        icon: ClipboardList, label: lang === "ta" ? "கோழி இருப்பு" : "Bird Stock" },
+    { key: "loan",          icon: IndianRupee,  label: t("servicesNeededTitle") },
+    { key: "notifications", icon: Bell,         label: t("notifications") },
+    { key: "profile",       icon: UserCircle,   label: lang === "ta" ? "சுயவிவரம்" : "Profile" },
   ];
 
   return (
@@ -103,10 +119,9 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
         {tab === "home" && <HomeTab user={user} onNavigate={(t) => handleTabChange(t)} />}
         {tab === "weekly" && <WeeklyUpdateTab />}
         {tab === "disease" && <DiseaseReportTab user={user} />}
-        {tab === "history" && <VaccinationHistoryTab />}
         {tab === "prices" && <MarketPricesTab />}
         {tab === "notifications" && <NotificationsTab user={user} />}
-        {tab === "vacstock" && <VaccinationStockTab />}
+        {tab === "profile" && <ProfileTab user={user} onUserUpdate={setCurrentUser} />}
         {tab === "loan" && (
           <div className="flex flex-col gap-5">
             <ServiceRequestTab />
@@ -122,14 +137,12 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
             <button
               key={key}
               onClick={() => handleTabChange(key)}
-              className={`flex-1 flex flex-col items-center py-2.5 gap-1 transition-all ${
+              className={`flex-1 min-w-0 flex flex-col items-center py-2.5 gap-1 transition-all ${
                 tab === key ? "text-primary" : "text-muted-foreground"
               }`}
             >
               <div className="relative">
-                <div className={`p-1.5 rounded-xl transition-all ${
-                  tab === key ? "bg-primary/10" : ""
-                }`}>
+                <div className={`p-1.5 rounded-xl transition-all ${tab === key ? "bg-primary/10" : ""}`}>
                   <Icon size={20} strokeWidth={tab === key ? 2.5 : 1.8} />
                 </div>
                 {key === "notifications" && notifCount > 0 && (
@@ -143,7 +156,7 @@ const Dashboard = ({ user, onLogout }: DashboardProps) => {
                   </span>
                 )}
               </div>
-              <span className={`text-[10px] font-semibold leading-tight text-center whitespace-nowrap ${
+              <span className={`text-[10px] font-semibold leading-tight text-center break-words px-0.5 ${
                 tab === key ? "text-primary" : "text-muted-foreground"
               }`}>{label}</span>
               {tab === key && <div className="w-5 h-0.5 bg-primary rounded-full" />}

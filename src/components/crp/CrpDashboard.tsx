@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { User, clearUser } from "@/lib/auth";
 import {
-  LayoutDashboard, Users, Bell, FileText, LogOut, ClipboardList, ShoppingBag, Syringe,
+  LayoutDashboard, Users, Bell, FileText, LogOut, ClipboardList, ShoppingBag, Syringe, UserCircle,
 } from "lucide-react";
 import CrpDashboardTab from "./CrpDashboardTab";
 import CrpFarmersTab from "./CrpFarmersTab";
@@ -12,13 +12,14 @@ import CrpApproveFarmersTab from "./CrpApproveFarmersTab";
 import CrpServicesTab from "./CrpServicesTab";
 import CrpStockTab from "./CrpStockTab";
 import CrpVaccinationScheduleTab from "./CrpVaccinationScheduleTab";
+import ChangePinCard from "@/components/ui/ChangePinCard";
 
 interface CrpDashboardProps {
   user: User;
   onLogout: () => void;
 }
 
-type CrpTab = "dashboard" | "farmers" | "alerts" | "services" | "approve" | "reports" | "stock" | "vaxschedule";
+type CrpTab = "dashboard" | "farmers" | "alerts" | "services" | "approve" | "reports" | "stock" | "vaxschedule" | "profile";
 
 const CrpDashboard = ({ user, onLogout }: CrpDashboardProps) => {
   const { t, lang, setLang } = useLanguage();
@@ -34,9 +35,10 @@ const CrpDashboard = ({ user, onLogout }: CrpDashboardProps) => {
     { key: "farmers",   icon: Users,           label: t("farmers") },
     { key: "services",  icon: ClipboardList,   label: t("services") },
     { key: "stock",     icon: ShoppingBag,  label: t("stock") },
-    { key: "vaxschedule", icon: Syringe,    label: "Vaccine" },
+    { key: "vaxschedule", icon: Syringe,    label: t("birdBatches") },
     { key: "alerts",    icon: Bell,         label: t("alerts") },
     { key: "reports",   icon: FileText,     label: t("reports") },
+    { key: "profile",   icon: UserCircle,   label: t("profile") },
   ];
 
   const handleNavigate = (target: "reports" | "alerts" | "services" | "approve") => {
@@ -53,6 +55,23 @@ const CrpDashboard = ({ user, onLogout }: CrpDashboardProps) => {
       case "approve":     return <CrpApproveFarmersTab />;
       case "vaxschedule": return <CrpVaccinationScheduleTab />;
       case "reports":     return <CrpReportsTab />;
+      case "profile":     return (
+        <div className="flex flex-col gap-4">
+          <div className="bg-white rounded-2xl border border-border/60 shadow-sm overflow-hidden">
+            <div className="px-4 py-5 flex items-center gap-4" style={{ background: "linear-gradient(135deg, #2E7D32, #388E3C)" }}>
+              <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center text-2xl font-bold text-white">
+                {user.name.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <p className="text-base font-bold text-white">{user.name}</p>
+                <p className="text-xs text-white/75">{user.phone}</p>
+                <p className="text-xs text-white/60">CRP</p>
+              </div>
+            </div>
+          </div>
+          <ChangePinCard />
+        </div>
+      );
     }
   };
 

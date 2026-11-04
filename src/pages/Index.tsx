@@ -1,18 +1,22 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getUser, setUser, getToken, clearUser, User } from "@/lib/auth";
 import { api } from "@/lib/api";
-import { setupPushNotifications } from "@/lib/pushNotifications";
 import ChooseActionScreen from "@/components/auth/ChooseActionScreen";
 import RegistrationScreen from "@/components/auth/RegistrationScreen";
 import OtpScreen from "@/components/auth/OtpScreen";
+import AdminLoginScreen from "@/components/auth/AdminLoginScreen";
+import PasswordLoginScreen from "@/components/auth/PasswordLoginScreen";
+import PasswordSetupScreen from "@/components/auth/PasswordSetupScreen";
+import AdminDashboard from "@/components/admin/AdminDashboard";
 import Dashboard from "@/components/dashboard/Dashboard";
 import CrpDashboard from "@/components/crp/CrpDashboard";
 import { toast } from "sonner";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { setupPushNotifications, teardownPushNotifications } from "@/lib/pushNotifications";
 
 const INACTIVITY_MS = 30 * 60 * 1000; // 30 minutes
 
-type Screen = "choose" | "register" | "otp" | "app";
+type Screen = "choose" | "register" | "otp" | "login" | "password-setup" | "admin-login" | "app";
 
 const Index = () => {
   const { t } = useLanguage();
@@ -24,6 +28,7 @@ const Index = () => {
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleLogout = useCallback((reason?: string) => {
+    teardownPushNotifications();
     clearUser();
     setUserState(null);
     setScreen("choose");
@@ -51,15 +56,36 @@ const Index = () => {
     if (stored) { setUserState(stored); setScreen("app"); }
   }, []);
 
+  // Register for push notifications once an authenticated session exists —
+  // covers both a fresh login (handleOtpVerified) and a restored session
+  // (effect above), since both set `user`. setupPushNotifications() itself
+  // guards against being run more than once.
+  useEffect(() => {
+    if (!user) return;
+    setupPushNotifications(getToken());
+  }, [user]);
+
   const handleLogin = async (phone: string) => {
     try {
-      const res = await api.sendOtp(phone);
+      const status = await api.getPasswordStatus(phone);
       setPendingPhone(phone);
-      setPendingOtp(res.otp || null);
-      setIsRegistering(false);
-      setScreen("otp");
+      if (status?.setupRequired === true) {
+        // User exists but no PIN set yet — go to PIN setup
+        setScreen("password-setup");
+      } else if (status?.setupRequired === false) {
+        // User exists and has a PIN — go to login
+        setScreen("login");
+      } else {
+        toast.error(t("userNotFound"));
+      }
     } catch (err: any) {
-      toast.error(err?.message || t("phoneNotRegistered"));
+      // If backend returns 404 or user not found
+      if (err?.message?.toLowerCase().includes("not found") || err?.message?.toLowerCase().includes("no user")) {
+        toast.error(t("userNotFound"));
+      } else {
+        setPendingPhone(phone);
+        setScreen("login");
+      }
     }
   };
 
@@ -69,15 +95,15 @@ const Index = () => {
         phone: data.phone,
         name: data.name,
         hamlet: data.hamlet,
+        hamletId: data.hamletId,
         street: data.street,
+        streetId: data.streetId,
         houseNo: data.houseNo,
         shg_name: data.shgName,
       });
-      const res = await api.sendOtp(data.phone);
       setPendingPhone(data.phone);
-      setPendingOtp(res.otp || null);
       setIsRegistering(true);
-      setScreen("otp");
+      setScreen("password-setup");
     } catch (err: any) {
       toast.error(err?.message || t("registrationFailed"));
     }
@@ -85,12 +111,23 @@ const Index = () => {
 
   const handleOtpVerified = (verifiedUser: User, token: string) => {
     setUser(verifiedUser, token);
-    setupPushNotifications(token);
     setUserState(verifiedUser);
     setScreen("app");
   };
 
+  const handleAdminLoginSuccess = (adminUser: User, token: string) => {
+    setUser(adminUser, token);
+    setUserState(adminUser);
+    setScreen("app");
+  };
+
+  const handlePasswordSetupSuccess = () => {
+    toast.success(t("registrationPendingCrp"));
+    setScreen("choose");
+  };
+
   if (screen === "app" && user) {
+    if (user.role === "ADMIN") return <AdminDashboard user={user} onLogout={handleLogout} />;
     if (user.role === "CRP") return <CrpDashboard user={user} onLogout={handleLogout} />;
     return (
       <div className="max-w-[430px] mx-auto min-h-screen shadow-lg">
@@ -114,6 +151,24 @@ const Index = () => {
           onVerified={handleOtpVerified}
           onBack={() => setScreen("choose")}
         />
+      )}
+      {screen === "login" && (
+        <PasswordLoginScreen
+          phone={pendingPhone}
+          onBack={() => setScreen("choose")}
+          onLoginSuccess={handleOtpVerified}
+        />
+      )}
+      {screen === "password-setup" && (
+        <PasswordSetupScreen
+          phone={pendingPhone}
+          onBack={() => setScreen("choose")}
+          onSetupSuccess={handlePasswordSetupSuccess}
+          onAlreadyHasPin={() => setScreen("login")}
+        />
+      )}
+      {screen === "admin-login" && (
+        <AdminLoginScreen onLoginSuccess={handleAdminLoginSuccess} onBack={() => setScreen("choose")} />
       )}
     </div>
   );

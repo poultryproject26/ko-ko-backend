@@ -8,7 +8,7 @@ import { formatDate } from "@/lib/mockData";
 import { Loader2, Wheat, Wrench, Syringe, ChevronDown, ChevronUp, ClipboardList } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLanguage } from "@/i18n/LanguageContext";
+import { useLanguage, TranslationKey } from "@/i18n/LanguageContext";
 
 const FEED_OPTIONS = ["மூட்டை தீவனம்", "கம்பு", "சோளம்", "இதர"];
 const EQUIPMENT_OPTIONS = ["கூண்டு", "கூடை", "கம்பி வலை", "வலை"];
@@ -17,9 +17,13 @@ const REQUEST_TYPE_KEYS = [
   { type: "Feed Stock",   icon: Wheat,   labelKey: "feedLabel",              color: "text-orange-600", bg: "bg-orange-50",  border: "border-orange-200" },
   { type: "Equipment",   icon: Wrench,  labelKey: "equipmentLabel",          color: "text-blue-600",   bg: "bg-blue-50",    border: "border-blue-200" },
   { type: "Vaccination", icon: Syringe, labelKey: "vaccinationRequestLabel", color: "text-green-600",  bg: "bg-green-50",   border: "border-green-200" },
-];
+] as const;
 
-const statusConfig: Record<string, { labelKey: string; className: string }> = {
+// Vaccination is no longer offered as a new request type (it has its own
+// requirement flow); REQUEST_TYPE_KEYS still labels past Vaccination requests.
+const SELECTABLE_REQUEST_TYPES = REQUEST_TYPE_KEYS.filter((r) => r.type !== "Vaccination");
+
+const statusConfig: Record<string, { labelKey: TranslationKey; className: string }> = {
   Pending:   { labelKey: "pending",   className: "bg-warning text-warning-foreground" },
   Completed: { labelKey: "approved",  className: "bg-success text-success-foreground" },
   Rejected:  { labelKey: "rejected",  className: "bg-destructive text-destructive-foreground" },
@@ -108,7 +112,7 @@ const ServiceRequestTab = () => {
       <div className="bg-white rounded-2xl border border-border/60 shadow-sm p-4 flex flex-col gap-4">
         <p className="text-sm font-bold text-foreground">{t("selectRequestType")}</p>
         <div className="flex flex-col gap-2.5">
-          {REQUEST_TYPE_KEYS.map(({ type, icon: Icon, labelKey, color, bg, border }) => (
+          {SELECTABLE_REQUEST_TYPES.map(({ type, icon: Icon, labelKey, color, bg, border }) => (
             <button
               key={type}
               onClick={() => handleSelectType(type)}

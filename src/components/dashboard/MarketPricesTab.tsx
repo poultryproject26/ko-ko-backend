@@ -6,6 +6,7 @@ import { Drumstick, Egg, Bird, TrendingUp, RefreshCw } from "lucide-react";
 function formatTamilDate(dateStr: string): string {
   if (!dateStr) return "-";
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "-";
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
@@ -40,10 +41,10 @@ const MarketPricesTab = () => {
   }
 
   const items = [
-    { icon: Drumstick, labelKey: "broilerPriceLabel", sublabel: "Broiler Chicken", value: price.broiler, unit: "/ kg",      color: "text-orange-600", bg: "bg-orange-50", border: "border-orange-200" },
-    { icon: Bird,      labelKey: "chickPriceLabel",   sublabel: "Chicks",          value: price.chick,   unit: t("chickUnit"), color: "text-yellow-600", bg: "bg-yellow-50", border: "border-yellow-200" },
-    { icon: Egg,       labelKey: "eggPriceLabel",     sublabel: "Eggs",            value: price.egg,     unit: t("eggUnit"),   color: "text-blue-600",   bg: "bg-blue-50",   border: "border-blue-200" },
-  ];
+    { icon: Drumstick, labelKey: "broilerPriceLabel", sublabel: "Desi Chicken",        value: price.broiler, unit: "/ kg",      color: "text-orange-600", bg: "bg-orange-50", border: "border-orange-200" },
+    { icon: Bird,      labelKey: "chickPriceLabel",   sublabel: "Desi Chicken Chicks", value: price.chick,   unit: t("chickUnit"), color: "text-yellow-600", bg: "bg-yellow-50", border: "border-yellow-200" },
+    { icon: Egg,       labelKey: "eggPriceLabel",     sublabel: "Desi Chicken Eggs",   value: price.egg,     unit: t("eggUnit"),   color: "text-blue-600",   bg: "bg-blue-50",   border: "border-blue-200" },
+  ] as const;
 
   return (
     <div className="flex flex-col gap-4">
@@ -52,7 +53,7 @@ const MarketPricesTab = () => {
           <TrendingUp size={22} className="text-white" />
           <div>
             <p className="text-base font-bold">{t("marketPriceTitle")}</p>
-            <p className="text-xs opacity-80">(Market Prices)</p>
+            <p className="text-xs opacity-80">(Current Market Status)</p>
           </div>
         </div>
       </div>

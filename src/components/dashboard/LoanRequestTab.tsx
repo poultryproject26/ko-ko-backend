@@ -17,7 +17,7 @@ const LOAN_PURPOSES = [
   { value: "கொட்டகை கட்ட",      labelKey: "buildShed" },
   { value: "மருந்து / தடுப்பூசி", labelKey: "medicineVaccine" },
   { value: "இதர",               labelKey: "other" },
-];
+] as const;
 
 const LoanHistorySection = ({ loanRequests }: { loanRequests: any[] }) => {
   const { t } = useLanguage();

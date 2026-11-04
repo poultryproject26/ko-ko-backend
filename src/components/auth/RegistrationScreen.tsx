@@ -10,19 +10,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { HAMLET_STREETS } from "@/lib/auth";
-import { api } from "@/lib/api";
+import { api, Street } from "@/lib/api";
+import { useHamlets, hamletDisplayName } from "@/hooks/use-hamlets";
 import { ArrowLeft, Loader2 } from "lucide-react";
-
-const HAMLETS_LIST = Object.keys(HAMLET_STREETS);
 
 interface RegistrationScreenProps {
   onNext: (data: {
     name: string;
     phone: string;
     hamlet: string;
+    hamletId: string;
     houseNo: string;
     street: string;
+    streetId: string;
     shgName: string;
   }) => void;
   onBack: () => void;
@@ -58,11 +58,16 @@ const RegistrationScreen = ({
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [houseNo, setHouseNo] = useState("");
-  const [street, setStreet] = useState("");
-  const [hamlet, setHamlet] = useState("");
+  const [streetId, setStreetId] = useState("");
+  const [hamletId, setHamletId] = useState("");
   const [shgName, setShgName] = useState("");
   const [shgNames, setShgNames] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const { hamlets, hamletsLoading } = useHamlets();
+
+  const [streets, setStreets] = useState<Street[]>([]);
+  const [streetsLoading, setStreetsLoading] = useState(false);
 
   useEffect(() => {
     api
@@ -71,19 +76,30 @@ const RegistrationScreen = ({
       .catch(() => {});
   }, []);
 
-  const availableStreets = hamlet
-    ? HAMLET_STREETS[hamlet] || []
-    : [];
+  // Load the canonical streets for whichever hamlet is currently selected.
+  useEffect(() => {
+    if (!hamletId) { setStreets([]); return; }
+    setStreetsLoading(true);
+    api.getHamletStreets(hamletId)
+      .then(setStreets)
+      .catch(() => setStreets([]))
+      .finally(() => setStreetsLoading(false));
+  }, [hamletId]);
+
+  const availableStreets = streets;
+
+  const selectedHamlet = hamlets.find((h) => h._id === hamletId);
+  const selectedStreet = streets.find((s) => s._id === streetId);
 
   const isValid =
     name.trim() &&
     phone.length === 10 &&
-    hamlet &&
-    street &&
+    hamletId &&
+    streetId &&
     shgName;
 
   const handleSubmit = async () => {
-    if (!isValid) return;
+    if (!isValid || !selectedHamlet || !selectedStreet) return;
 
     setLoading(true);
 
@@ -94,16 +110,18 @@ const RegistrationScreen = ({
     onNext({
       name,
       phone,
-      hamlet,
+      hamlet: hamletDisplayName(selectedHamlet, lang),
+      hamletId,
       houseNo,
-      street,
+      street: (lang === "en" ? selectedStreet.nameEn || selectedStreet.name : selectedStreet.nameTa || selectedStreet.name) || selectedStreet.name,
+      streetId,
       shgName,
     });
   };
 
   const handleHamletChange = (value: string) => {
-    setHamlet(value);
-    setStreet("");
+    setHamletId(value);
+    setStreetId("");
   };
 
   return (
@@ -190,21 +208,25 @@ const RegistrationScreen = ({
 
             <FieldRow label={t("village")}>
               <Select
-                value={hamlet}
+                value={hamletId}
                 onValueChange={handleHamletChange}
+                disabled={hamletsLoading}
               >
                 <SelectTrigger className="tap-target text-base bg-white border-2 focus:border-primary rounded-xl">
-                  <SelectValue placeholder={t("selectHamlet")} />
+                  <SelectValue placeholder={hamletsLoading ? t("loading") : t("selectHamlet")} />
                 </SelectTrigger>
 
                 <SelectContent>
-                  {HAMLETS_LIST.map((h) => (
+                  {!hamletsLoading && hamlets.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">{t("noHamletsFound")}</div>
+                  )}
+                  {hamlets.map((h) => (
                     <SelectItem
-                      key={h}
-                      value={h}
+                      key={h._id}
+                      value={h._id}
                       className="text-base py-3"
                     >
-                      {h}
+                      {hamletDisplayName(h, lang)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -213,22 +235,29 @@ const RegistrationScreen = ({
 
             <FieldRow label={t("street")}>
               <Select
-                value={street}
-                onValueChange={setStreet}
-                disabled={!hamlet}
+                value={streetId}
+                onValueChange={setStreetId}
+                disabled={!hamletId || streetsLoading}
               >
                 <SelectTrigger className="tap-target text-base bg-white border-2 focus:border-primary rounded-xl">
-                  <SelectValue placeholder={t("selectStreet")} />
+                  <SelectValue placeholder={
+                    !hamletId
+                      ? t("selectHamletFirstPlaceholder")
+                      : (streetsLoading ? t("loading") : t("selectStreet"))
+                  } />
                 </SelectTrigger>
 
                 <SelectContent>
+                  {!streetsLoading && hamletId && availableStreets.length === 0 && (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">{t("noStreetsFound")}</div>
+                  )}
                   {availableStreets.map((s) => (
                     <SelectItem
-                      key={s}
-                      value={s}
+                      key={s._id}
+                      value={s._id}
                       className="text-base py-3"
                     >
-                      {s}
+                      {(lang === "en" ? s.nameEn || s.name : s.nameTa || s.name) || s.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

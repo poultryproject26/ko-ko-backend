@@ -1,266 +1,271 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { useLanguage } from "@/i18n/LanguageContext";
 import { toast } from "sonner";
-import {
-  Syringe, Calendar, CheckCircle2, AlertTriangle,
-  ChevronDown, ChevronUp, Plus, XCircle, RefreshCw, FileText,
-} from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronUp, Plus, Syringe } from "lucide-react";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  formatVaccinationCalendarDate,
+  formatVaccinationSubmissionDate,
+  getKolkataTodayCalendarDate,
+  getVaccinationStockDueDate,
+  isVaccinationStockPendingOnDate,
+} from "@/lib/vaccinationDates";
 
-function fmt(d: string | Date): string {
-  const dt = new Date(d);
-  return `${String(dt.getDate()).padStart(2, "0")}/${String(dt.getMonth() + 1).padStart(2, "0")}/${dt.getFullYear()}`;
+function formatBatchDate(value: string | Date): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : `${String(date.getDate()).padStart(2, "0")}/${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  F_vaccine:   "F Vaccine (Day 0)",
-  IBD:         "IBD Vaccine (Day 14)",
-  LaSota:      "LaSota Vaccine (Day 28)",
-  fowl_pox:    "Fowl Pox Vaccine (Day 42)",
-  deworming:   "Deworming (Day 56)",
-  R2B:         "R2B + Deworming (Day 70)",
-  multivitamin: "Multivitamins (Day 84)",
-  R2B_booster: "R2B Booster + Deworming",
-};
-
-const STATUS_STYLE: Record<string, string> = {
-  completed:   "text-success bg-success/10",
-  scheduled:   "text-primary bg-primary/10",
-  overdue:     "text-destructive bg-destructive/10",
-  missed:      "text-amber-700 bg-amber-100",
-  rescheduled: "text-warning bg-warning/10",
-};
-
-// ── Action modal ──────────────────────────────────────────────────────────────
-interface ActionModalProps {
-  event: any;
-  onClose: () => void;
-  onDone: () => void;
+interface Farmer {
+  _id: string;
+  name: string;
+  phone: string;
+  hamlet?: string;
 }
 
-const ActionModal = ({ event, onClose, onDone }: ActionModalProps) => {
-  const [action, setAction] = useState<"complete" | "missed" | "reschedule" | null>(null);
-  const [notes, setNotes] = useState("");
-  const [rescheduleDate, setRescheduleDate] = useState("");
-  const [loading, setLoading] = useState(false);
+interface BirdBatch {
+  _id: string;
+  batchName: string;
+  numberOfChicks: number;
+  activeBirdCount: number;
+  mortalityCount: number;
+  batchDate: string;
+  batchStatus: "active" | "inactive";
+}
 
-  const label = TYPE_LABELS[event.type] ?? event.label;
+interface VaccinationStockRequest {
+  _id: string;
+  userId?: {
+    name?: string;
+    phone?: string;
+    hamlet?: string;
+    hamletId?: { name?: string; nameTa?: string; nameEn?: string } | string;
+  } | string;
+  withinMonth?: number;
+  month2?: number;
+  month3?: number;
+  month4Plus?: number;
+  entryDate?: string | Date | null;
+  dueDate?: string | Date | null;
+  status?: string | null;
+}
 
-  const handleSubmit = async () => {
-    if (!action) return;
-    setLoading(true);
+function getFarmerHamlet(user: VaccinationStockRequest["userId"]): string {
+  if (!user || typeof user === "string") return "—";
+  if (typeof user.hamletId === "object" && user.hamletId) {
+    return user.hamletId.nameTa || user.hamletId.name || user.hamletId.nameEn || user.hamlet || "—";
+  }
+  return user.hamlet || "—";
+}
+
+function VaccinationDueList() {
+  const { t } = useLanguage();
+  const [selectedDate, setSelectedDate] = useState(getKolkataTodayCalendarDate);
+  const [completingId, setCompletingId] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const {
+    data: stockRequests = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery<VaccinationStockRequest[]>({
+    queryKey: ["crpVaccinationStock"],
+    queryFn: () => api.getAllVaccinationStock(),
+    staleTime: 0,
+  });
+
+  const pendingRequests = stockRequests.filter((stock) =>
+    isVaccinationStockPendingOnDate(stock, selectedDate)
+  );
+  const completedRequestsForDate = stockRequests.filter((stock) =>
+    stock.status === "completed" && getVaccinationStockDueDate(stock) === selectedDate
+  );
+
+  const handleComplete = async (id: string) => {
+    if (completingId) return;
+    setCompletingId(id);
     try {
-      if (action === "complete") {
-        await api.completeVaccination(event._id, notes);
-        toast.success(`✅ ${label} marked as completed`);
-      } else if (action === "missed") {
-        await api.missVaccination(event._id, notes);
-        toast.success(`⚠️ ${label} marked as skipped`);
-      } else if (action === "reschedule") {
-        if (!rescheduleDate) { toast.error("Select a new date"); setLoading(false); return; }
-        await api.rescheduleVaccination(event._id, rescheduleDate, notes);
-        toast.success(`📅 ${label} rescheduled to ${fmt(rescheduleDate)}`);
-      }
-      onDone();
-      onClose();
-    } catch (err: any) {
-      toast.error(err?.message || "Action failed");
+      await api.completeVaccinationStock(id);
+      await queryClient.invalidateQueries({ queryKey: ["crpVaccinationStock"] });
+      toast.success(t("vaccinationCompleted"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("vaccinationCompletionFailed"));
     } finally {
-      setLoading(false);
+      setCompletingId(null);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-end justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-sm p-5 flex flex-col gap-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-bold text-foreground">{label}</p>
-          <button onClick={onClose} className="text-muted-foreground"><XCircle size={20} /></button>
+    <Card className="p-4 sm:p-5 border-2 border-green-200">
+      <div className="flex items-center gap-2 mb-4">
+        <Syringe size={20} className="text-green-700" />
+        <h2 className="text-lg font-bold text-foreground">{t("vaccinationDueList")}</h2>
+      </div>
+
+      <label htmlFor="vaccination-due-date" className="block text-sm font-medium text-foreground mb-1">
+        {t("selectedVaccinationDate")}
+      </label>
+      <Input
+        id="vaccination-due-date"
+        type="date"
+        value={selectedDate}
+        onChange={(event) => setSelectedDate(event.target.value)}
+        className="mb-2 w-full sm:max-w-xs"
+      />
+      <p className="text-sm text-muted-foreground mb-4">
+        {formatVaccinationCalendarDate(selectedDate)}
+      </p>
+
+      {isLoading && (
+        <div role="status" className="py-6 text-center text-sm text-muted-foreground">
+          {t("loadingVaccinationRequests")}
         </div>
-        <p className="text-xs text-muted-foreground">Scheduled: {fmt(event.scheduledDate)}</p>
-
-        {/* Action buttons */}
-        <div className="grid grid-cols-3 gap-2">
-          {(["complete", "missed", "reschedule"] as const).map((a) => (
-            <button
-              key={a}
-              onClick={() => setAction(a)}
-              className={`py-2 rounded-xl text-xs font-bold border transition-all ${
-                action === a
-                  ? a === "complete" ? "bg-success text-white border-success"
-                    : a === "missed" ? "bg-danger text-white border-danger"
-                    : "bg-warning text-white border-warning"
-                  : "border-border text-muted-foreground"
-              }`}
-            >
-              {a === "complete" ? "✅ Done" : a === "missed" ? "❌ Skipped" : "📅 Reschedule"}
-            </button>
-          ))}
-        </div>
-
-        {action === "reschedule" && (
-          <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} className="text-sm" />
-        )}
-
-        <textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Notes / Remarks (optional)"
-          rows={2}
-          className="w-full border border-input rounded-xl px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-        />
-
-        <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
-          <Button className="flex-1" disabled={!action || loading} onClick={handleSubmit}>
-            {loading ? "Saving..." : "Save"}
+      )}
+      {isError && (
+        <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+          <p className="text-sm text-destructive mb-3">{t("couldNotLoadVaccinationRequests")}</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+            {t("retry")}
           </Button>
         </div>
-      </div>
-    </div>
-  );
-};
+      )}
+      {!isLoading && !isError && pendingRequests.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          {completedRequestsForDate.length > 0
+            ? t("allVaccinationRequestsCompletedForDate")
+            : t("noVaccinationRequestsDueOnDate")}
+        </p>
+      )}
+      {!isLoading && !isError && pendingRequests.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {pendingRequests.map((stock) => {
+            const farmer = typeof stock.userId === "object" ? stock.userId : undefined;
+            const quantities = [
+              ["vaxWithinMonthAgeLabel", "vaxSubLasota", stock.withinMonth],
+              ["vax2MonthAgeLabel", "vaxSubFowlPox", stock.month2],
+              ["vax3MonthAgeLabel", "vaxSubInfectiousCoryza", stock.month3],
+              ["vax4to7MonthAgeLabel", "vaxSubRdvkDeworming", stock.month4Plus],
+            ] as const;
 
-// ── Batch card ────────────────────────────────────────────────────────────────
-interface BatchCardProps {
-  batch: any;
-  onRefetch: () => void;
+            return (
+              <div key={stock._id} className="rounded-xl border border-green-200 bg-green-50/50 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-foreground">{farmer?.name || "—"}</p>
+                    <p className="text-xs text-muted-foreground">{t("village")}: {getFarmerHamlet(stock.userId)}</p>
+                    <p className="text-xs text-muted-foreground">{t("phoneNumber")}: {farmer?.phone || "—"}</p>
+                  </div>
+                  <span className="rounded-full bg-warning px-3 py-1 text-xs font-semibold text-warning-foreground">
+                    {t("pending")}
+                  </span>
+                </div>
+
+                <div className="mb-3 rounded-lg border border-green-100 bg-white p-3">
+                  <div className="flex flex-col gap-2">
+                    {quantities.map(([ageKey, vaccineKey, quantity]) => (
+                      <p key={ageKey} className="flex flex-wrap justify-between gap-x-3 text-xs text-foreground">
+                        <span>{t(ageKey)} ({t(vaccineKey)})</span>
+                        <span className="font-bold">{quantity || 0} {t("birdsUnit")}</span>
+                      </p>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mb-3 space-y-1">
+                  <p className="text-xs text-muted-foreground">
+                    {t("vaccinationRequestSubmitted")}: {formatVaccinationSubmissionDate(stock.entryDate)}
+                  </p>
+                  <p className="text-xs font-semibold text-foreground">
+                    {t("vaccinationRequestDeadline")}: {formatVaccinationCalendarDate(getVaccinationStockDueDate(stock))}
+                  </p>
+                </div>
+
+                <Button
+                  type="button"
+                  disabled={completingId !== null}
+                  onClick={() => void handleComplete(stock._id)}
+                  className="w-full bg-success text-success-foreground hover:bg-success/90"
+                >
+                  <CheckCircle2 size={16} className="mr-2" />
+                  {completingId === stock._id
+                    ? t("completingVaccination")
+                    : t("markVaccinationRequestCompleted")}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
 }
 
-const BatchCard = ({ batch, onRefetch }: BatchCardProps) => {
+function BatchCard({ batch, onRefetch }: { batch: BirdBatch; onRefetch: () => void }) {
+  const { t } = useLanguage();
   const [expanded, setExpanded] = useState(false);
-  const [actionEvent, setActionEvent] = useState<any | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const schedule: any[] = batch.schedule ?? [];
-  const overdue   = schedule.filter((e) => e.status === "overdue");
-  const upcoming  = schedule.filter((e) => e.status === "scheduled" || e.status === "rescheduled");
-  const done      = schedule.filter((e) => e.status === "completed" || e.status === "missed");
+  const handleDelete = async () => {
+    if (deleting || !window.confirm(t("deleteBatchConfirm"))) return;
+    setDeleting(true);
+    try {
+      await api.deleteBatch(batch._id);
+      toast.success(`${t("batchDeleted")}: ${batch.batchName}`);
+      onRefetch();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete batch");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
-    <>
-      {actionEvent && (
-        <ActionModal
-          event={actionEvent}
-          onClose={() => setActionEvent(null)}
-          onDone={onRefetch}
-        />
-      )}
-
-      <div className="bg-muted/30 rounded-xl border border-border/40 overflow-hidden">
+    <div className="bg-muted/30 rounded-xl border border-border/40 overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-3">
         <button
-          onClick={() => setExpanded((p) => !p)}
-          className="w-full flex items-center justify-between px-4 py-3 text-left"
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="flex-1 flex items-center justify-between text-left"
         >
           <div>
             <p className="text-sm font-bold text-foreground">{batch.batchName}</p>
             <p className="text-xs text-muted-foreground">
-              {batch.numberOfChicks} chicks • Batch date: {fmt(batch.batchDate)}
-              {batch.batchStatus === "inactive" && <span className="ml-2 text-danger font-semibold">• Inactive</span>}
+              {batch.numberOfChicks} birds · Batch date: {formatBatchDate(batch.batchDate)}
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {overdue.length > 0 && (
-              <span className="text-xs font-bold text-destructive bg-destructive/10 px-2 py-0.5 rounded-lg">
-                {overdue.length} overdue
-              </span>
-            )}
-            <button
-              disabled={deleting}
-              onClick={async (e) => {
-                e.stopPropagation();
-                if (deleting) return;
-                if (!window.confirm("Delete this batch and all its vaccination records?")) return;
-                setDeleting(true);
-                try {
-                  await api.deleteBatch(batch.batchId);
-                  toast.success(`✅ Batch "${batch.batchName}" deleted`);
-                  onRefetch();
-                } catch (err: any) {
-                  toast.error(err?.message || "Failed to delete batch");
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-              className="text-xs font-semibold text-danger border border-danger/20 rounded-xl px-2 py-1 hover:bg-danger/10"
-            >
-              {deleting ? "Deleting..." : "Delete"}
-            </button>
-            {expanded ? <ChevronUp size={15} className="text-muted-foreground" /> : <ChevronDown size={15} className="text-muted-foreground" />}
-          </div>
+          {expanded
+            ? <ChevronUp size={15} className="text-muted-foreground" />
+            : <ChevronDown size={15} className="text-muted-foreground" />}
         </button>
-
-        {expanded && (
-          <div className="border-t border-border/40 px-4 py-3 flex flex-col gap-2">
-            {[...overdue, ...upcoming].length === 0 && done.length > 0 && (
-              <p className="text-xs text-success font-semibold flex items-center gap-1">
-                <CheckCircle2 size={12} /> All vaccinations completed
-              </p>
-            )}
-
-            {[...overdue, ...upcoming].map((e) => (
-              <div key={e.type + e.scheduledDate} className="flex items-center justify-between gap-2 py-2 border-b border-border/20 last:border-0">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground truncate">{TYPE_LABELS[e.type] ?? e.label}</p>
-                  <p className="text-xs text-muted-foreground flex items-center gap-1">
-                    <Calendar size={10} />
-                    {e.status === "rescheduled" && e.rescheduledDate
-                      ? `Rescheduled: ${fmt(e.rescheduledDate)}`
-                      : fmt(e.scheduledDate)}
-                  </p>
-                  {e.notes && <p className="text-xs text-muted-foreground italic mt-0.5">"{e.notes}"</p>}
-                </div>
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-lg ${STATUS_STYLE[e.status] ?? ""}`}>
-                    {e.status === "missed" ? "skipped" : e.status}
-                  </span>
-                  {e._id && (
-                    <button
-                      onClick={() => setActionEvent(e)}
-                      className="text-xs font-semibold px-2 py-1 rounded-lg bg-primary/10 text-primary border border-primary/20"
-                    >
-                      <FileText size={12} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-
-            {done.length > 0 && (
-              <details className="mt-1">
-                <summary className="text-xs text-muted-foreground cursor-pointer">
-                  Completed ({done.length})
-                </summary>
-                <div className="flex flex-col gap-1 mt-2">
-                  {done.map((e) => {
-                    const skipped = e.status === "missed" || (e.notes && String(e.notes).toLowerCase().includes("skipped"));
-                    return (
-                      <div key={e.type + e.scheduledDate} className="flex items-center justify-between py-1">
-                        <p className="text-xs text-muted-foreground">
-                          {TYPE_LABELS[e.type] ?? e.label} {skipped ? "(skipped)" : ""}
-                        </p>
-                        <span className="text-xs font-bold text-success flex items-center gap-1">
-                          <CheckCircle2 size={11} /> {e.completedDate ? fmt(e.completedDate) : fmt(e.scheduledDate)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            )}
-          </div>
-        )}
+        <button
+          type="button"
+          disabled={deleting}
+          onClick={handleDelete}
+          className="text-xs font-semibold text-danger border border-danger/20 rounded-xl px-2 py-1 hover:bg-danger/10"
+        >
+          {deleting ? "..." : t("delete")}
+        </button>
       </div>
-    </>
+      {expanded && (
+        <div className="border-t border-border/40 px-4 py-3 text-xs text-muted-foreground space-y-1">
+          <p>{t("activeBirdCount")}: {batch.activeBirdCount}</p>
+          <p>{t("mortalityCount")}: {batch.mortalityCount}</p>
+          <p>{t("batchStatus")}: {batch.batchStatus}</p>
+          <p>{t("vaccinationRequestsManagedSeparately")}</p>
+        </div>
+      )}
+    </div>
   );
-};
+}
 
-// ── Farmer row ────────────────────────────────────────────────────────────────
-interface FarmerRowProps { farmer: any }
-
-const FarmerScheduleRow = ({ farmer }: FarmerRowProps) => {
+function FarmerBatchRow({ farmer }: { farmer: Farmer }) {
+  const { t } = useLanguage();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [showAddBatch, setShowAddBatch] = useState(false);
@@ -270,27 +275,35 @@ const FarmerScheduleRow = ({ farmer }: FarmerRowProps) => {
   const [saving, setSaving] = useState(false);
 
   const { data: batches = [], isLoading, refetch } = useQuery({
-    queryKey: ["farmerSchedule", farmer._id],
-    queryFn: () => api.getFarmerSchedule(farmer._id).catch(() => []),
+    queryKey: ["farmerBatches", farmer._id],
+    queryFn: () => api.getFarmerBatches(farmer._id),
     enabled: expanded,
     staleTime: 60_000,
   });
 
-  const totalOverdue = (batches as any[]).reduce((sum, b) =>
-    sum + (b.schedule ?? []).filter((e: any) => e.status === "overdue").length, 0);
-
   const handleAddBatch = async () => {
-    if (!batchName || !batchDate) { toast.error("Batch name and date required"); return; }
+    if (!batchName || !batchDate) {
+      toast.error(t("batchNameAndDateRequired"));
+      return;
+    }
+
     setSaving(true);
     try {
-      await api.createBatch({ userId: farmer._id, batchName, numberOfChicks: parseInt(numChicks) || 0, batchDate });
-      toast.success(`✅ Batch "${batchName}" created`);
-      refetch();
+      await api.createBatch({
+        userId: farmer._id,
+        batchName,
+        numberOfChicks: Number.parseInt(numChicks, 10) || 0,
+        batchDate,
+      });
+      toast.success(`${t("batchCreated")}: ${batchName}`);
+      await refetch();
       queryClient.invalidateQueries({ queryKey: ["allBatches"] });
-      setBatchName(""); setNumChicks(""); setBatchDate("");
+      setBatchName("");
+      setNumChicks("");
+      setBatchDate("");
       setShowAddBatch(false);
-    } catch (err: any) {
-      toast.error(err?.message || "Failed to create batch");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create batch");
     } finally {
       setSaving(false);
     }
@@ -299,7 +312,8 @@ const FarmerScheduleRow = ({ farmer }: FarmerRowProps) => {
   return (
     <div className="bg-white rounded-2xl border border-border/60 shadow-sm overflow-hidden">
       <button
-        onClick={() => setExpanded((p) => !p)}
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
         className="w-full flex items-center justify-between p-4 text-left hover:bg-muted/30 transition-colors"
       >
         <div className="flex items-center gap-3">
@@ -308,102 +322,85 @@ const FarmerScheduleRow = ({ farmer }: FarmerRowProps) => {
           </div>
           <div>
             <p className="text-sm font-bold text-foreground">{farmer.name}</p>
-            <p className="text-xs text-muted-foreground">{farmer.hamlet} • {farmer.phone}</p>
+            <p className="text-xs text-muted-foreground">{farmer.hamlet || "—"} · {farmer.phone}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {totalOverdue > 0 && (
-            <span className="text-xs font-bold text-destructive bg-destructive/10 px-2 py-0.5 rounded-lg">
-              {totalOverdue} overdue
-            </span>
-          )}
-          {expanded ? <ChevronUp size={16} className="text-muted-foreground" /> : <ChevronDown size={16} className="text-muted-foreground" />}
-        </div>
+        {expanded
+          ? <ChevronUp size={16} className="text-muted-foreground" />
+          : <ChevronDown size={16} className="text-muted-foreground" />}
       </button>
 
       {expanded && (
         <div className="border-t border-border/60 p-4 flex flex-col gap-3">
-
-          {/* Add batch form */}
           {showAddBatch ? (
             <div className="bg-muted/30 rounded-xl p-3 flex flex-col gap-2">
-              <p className="text-xs font-bold text-foreground">New Batch</p>
-              <Input placeholder="Batch name (e.g. Batch 1)" value={batchName} onChange={(e) => setBatchName(e.target.value)} className="text-sm" />
-              <Input placeholder="Number of chicks" type="number" value={numChicks} onChange={(e) => setNumChicks(e.target.value)} className="text-sm" />
-              <Input type="date" value={batchDate} onChange={(e) => setBatchDate(e.target.value)} className="text-sm" />
+              <p className="text-xs font-bold text-foreground">{t("newBirdBatch")}</p>
+              <Input
+                placeholder="Batch name (e.g. Batch 1)"
+                value={batchName}
+                onChange={(event) => setBatchName(event.target.value)}
+                className="text-sm"
+              />
+              <Input
+                placeholder={t("numberOfBirds")}
+                type="number"
+                min="0"
+                value={numChicks}
+                onChange={(event) => setNumChicks(event.target.value)}
+                className="text-sm"
+              />
+              <Input
+                aria-label="Batch date"
+                type="date"
+                value={batchDate}
+                onChange={(event) => setBatchDate(event.target.value)}
+                className="text-sm"
+              />
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowAddBatch(false)}>Cancel</Button>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => setShowAddBatch(false)}>
+                  Cancel
+                </Button>
                 <Button size="sm" className="flex-1" disabled={saving} onClick={handleAddBatch}>
-                  {saving ? "..." : "Create & Generate Schedule"}
+                  {saving ? "..." : t("createBatch")}
                 </Button>
               </div>
             </div>
           ) : (
             <button
+              type="button"
               onClick={() => setShowAddBatch(true)}
               className="flex items-center gap-2 text-xs font-semibold text-primary border border-primary/30 rounded-xl px-3 py-2 hover:bg-primary/5"
             >
-              <Plus size={14} /> Add New Batch
+              <Plus size={14} /> {t("addNewBatch")}
             </button>
           )}
 
-          {isLoading && (
-            <div className="flex flex-col gap-2">
-              {[1, 2].map((i) => <div key={i} className="h-12 bg-muted/40 rounded-xl animate-pulse" />)}
-            </div>
+          {isLoading && <div className="h-12 bg-muted/40 rounded-xl animate-pulse" />}
+          {!isLoading && batches.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-2">{t("noBatchesYet")}</p>
           )}
-
-          {!isLoading && (batches as any[]).length === 0 && (
-            <p className="text-xs text-muted-foreground text-center py-2">No batches yet. Add one above.</p>
-          )}
-
-          {!isLoading && (batches as any[]).map((batch: any) => (
-            <BatchCard key={batch.batchId} batch={batch} onRefetch={refetch} />
+          {batches.map((batch: BirdBatch) => (
+            <BatchCard key={batch._id} batch={batch} onRefetch={() => { void refetch(); }} />
           ))}
         </div>
       )}
     </div>
   );
-};
+}
 
-// ── Main tab ──────────────────────────────────────────────────────────────────
 const CrpVaccinationScheduleTab = () => {
+  const { t } = useLanguage();
   const [search, setSearch] = useState("");
-  const [summaryOpen, setSummaryOpen] = useState(true);
-  const [summaryDate, setSummaryDate] = useState(() => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  });
-
-  const { data: farmers = [], isLoading } = useQuery({
+  const { data: farmers = [], isLoading, isError } = useQuery({
     queryKey: ["crpFarmers"],
     queryFn: () => api.getFarmers(),
     staleTime: 60_000,
   });
 
-  const { data: allVaccines = [], isLoading: isSummaryLoading } = useQuery({
-    queryKey: ["allVaccinations"],
-    queryFn: () => api.getAllVaccinations().catch(() => []),
-    staleTime: 60_000,
-  });
-
-  const summaryRecords = (allVaccines as any[])
-    .map((r: any) => ({
-      ...r,
-      effectiveDate: r.status === "rescheduled" && r.rescheduledDate ? r.rescheduledDate : r.scheduledDate,
-      farmerName: r.userId?.name || "Unknown",
-      batchName: r.batchId?.batchName || "",
-    }))
-    .filter((r: any) => ["scheduled", "overdue", "rescheduled"].includes(r.status))
-    .filter((r: any) => {
-      const d = new Date(r.effectiveDate);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}` === summaryDate;
-    });
-
-  const summaryCount = summaryRecords.length;
-
-  const filtered = (farmers as any[]).filter((f) =>
-    !search || f.name.toLowerCase().includes(search.toLowerCase()) || f.phone.includes(search)
+  const filteredFarmers = (farmers as Farmer[]).filter((farmer) =>
+    !search
+    || farmer.name.toLowerCase().includes(search.toLowerCase())
+    || farmer.phone.includes(search)
   );
 
   return (
@@ -412,91 +409,39 @@ const CrpVaccinationScheduleTab = () => {
         <div className="flex items-center gap-3">
           <Syringe size={22} className="text-white" />
           <div>
-            <p className="text-base font-bold">Vaccination Schedule</p>
-            <p className="text-xs opacity-80">Manage batches & track all farmers</p>
+            <p className="text-base font-bold">{t("birdBatches")}</p>
+            <p className="text-xs opacity-80">{t("manageBirdBatches")}</p>
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-border/60 shadow-sm overflow-hidden">
-        <button
-          onClick={() => setSummaryOpen((p) => !p)}
-          className="w-full px-4 py-3 flex items-center justify-between text-left"
-        >
-          <div>
-            <p className="text-sm font-bold text-foreground">Vaccination due on {summaryDate}</p>
-            <p className="text-xs text-muted-foreground">
-              {summaryOpen ? "Collapse" : "Expand"} to see which farmer needs which vaccine
-            </p>
-          </div>
-          <ChevronDown size={18} className={`transition-transform ${summaryOpen ? "rotate-180" : ""}`} />
-        </button>
-        {summaryOpen && (
-          <div className="border-t border-border/60 px-4 py-3 space-y-3">
-            <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{summaryCount} pending vaccination{summaryCount === 1 ? "" : "s"}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-semibold text-foreground">Date</label>
-                <Input
-                  type="date"
-                  value={summaryDate}
-                  onChange={(e) => setSummaryDate(e.target.value)}
-                  className="h-10 text-xs"
-                />
-              </div>
-            </div>
-            {isSummaryLoading ? (
-              <div className="text-xs text-muted-foreground">Loading schedule...</div>
-            ) : summaryCount === 0 ? (
-              <div className="text-xs text-muted-foreground">No vaccinations scheduled for this date.</div>
-            ) : (
-              <div className="grid gap-2">
-                {summaryRecords.slice(0, 6).map((record: any) => (
-                  <div key={`${record._id}-${record.batchId}`} className="rounded-2xl border border-border/70 bg-muted/30 p-3">
-                    <p className="text-xs font-bold text-foreground truncate">{record.farmerName}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {record.batchName ? `${record.batchName} • ` : ""}{TYPE_LABELS[record.type] ?? record.label}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {record.status === "rescheduled" ? "Rescheduled" : record.status === "overdue" ? "Overdue" : "Scheduled"}
-                    </p>
-                  </div>
-                ))}
-                {summaryCount > 6 && (
-                  <p className="text-xs text-muted-foreground">+{summaryCount - 6} more farmers</p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <VaccinationDueList />
 
       <input
         value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search farmers..."
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder={t("searchFarmers")}
         className="w-full border border-input rounded-xl px-4 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary/30"
       />
 
       {isLoading && (
         <div className="flex flex-col gap-3">
-          {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-white rounded-2xl border border-border/60 animate-pulse" />)}
+          {[1, 2, 3].map((item) => <div key={item} className="h-16 bg-white rounded-2xl border border-border/60 animate-pulse" />)}
         </div>
       )}
-
-      {!isLoading && filtered.length === 0 && (
+      {isError && (
+        <div role="alert" className="text-sm text-destructive">
+          {t("couldNotLoadFarmers")}
+        </div>
+      )}
+      {!isLoading && !isError && filteredFarmers.length === 0 && (
         <div className="bg-white rounded-2xl border border-border/60 p-8 text-center">
-          <p className="text-sm text-muted-foreground">No farmers found</p>
+          <p className="text-sm text-muted-foreground">{t("noFarmersFound")}</p>
         </div>
       )}
-
-      {!isLoading && (
+      {!isLoading && !isError && (
         <div className="flex flex-col gap-3">
-          {filtered.map((f: any) => (
-            <FarmerScheduleRow key={f._id} farmer={f} />
-          ))}
+          {filteredFarmers.map((farmer) => <FarmerBatchRow key={farmer._id} farmer={farmer} />)}
         </div>
       )}
     </div>

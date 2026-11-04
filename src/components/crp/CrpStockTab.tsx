@@ -4,17 +4,19 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api";
-import { HAMLETS } from "@/lib/auth";
 import { formatDate } from "@/lib/mockData";
+import { useHamlets, hamletDisplayName } from "@/hooks/use-hamlets";
 import { MessageCircle, ShoppingBag, Phone } from "lucide-react";
 import { toast } from "sonner";
 
 const CrpStockTab = () => {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const { hamlets, hamletsLoading } = useHamlets();
   const [stocks, setStocks] = useState<any[]>([]);
   const [refresh, setRefresh] = useState(0);
   const [tab, setTab] = useState<"available" | "sold">("available");
   const [hamletFilter, setHamletFilter] = useState("");
+  const [soldLoading, setSoldLoading] = useState<string | null>(null);
 
   useEffect(() => {
     api.getSaleStocks().then(setStocks).catch(() => {});
@@ -32,9 +34,17 @@ const CrpStockTab = () => {
   const totalEggs     = available.reduce((sum, s) => sum + (s.eggs     || 0), 0);
 
   const handleMarkSold = async (id: string) => {
-    await api.markSold(id);
-    toast.success(`${t("markedAsSold")} ✅`);
-    setRefresh((k) => k + 1);
+    if (soldLoading) return;
+    setSoldLoading(id);
+    try {
+      await api.markSold(id);
+      toast.success(`${t("markedAsSold")} ✅`);
+      setRefresh((k) => k + 1);
+    } catch (err: any) {
+      toast.error(err?.message || "விற்பனை பதிவு செய்ய முடியவில்லை");
+    } finally {
+      setSoldLoading(null);
+    }
   };
 
   const handleWhatsapp = (s: any) => {
@@ -95,10 +105,14 @@ const CrpStockTab = () => {
       <select
         value={hamletFilter}
         onChange={(e) => setHamletFilter(e.target.value)}
-        className="border border-input rounded-md px-3 py-2 text-sm bg-card text-foreground"
+        disabled={hamletsLoading}
+        className="border border-input rounded-md px-3 py-2 text-sm bg-card text-foreground disabled:opacity-60"
       >
-        <option value="">{t("allHamlets")}</option>
-        {HAMLETS.map((h) => <option key={h} value={h}>{h}</option>)}
+        <option value="">{hamletsLoading ? t("loading") : t("allHamlets")}</option>
+        {hamlets.map((h) => {
+          const label = hamletDisplayName(h, lang);
+          return <option key={h._id} value={label}>{label}</option>;
+        })}
       </select>
 
       {/* Tabs */}
@@ -169,11 +183,16 @@ const CrpStockTab = () => {
             {/* Actions */}
             {s.status === "available" && (
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => handleMarkSold(s._id)} className="flex-1 bg-success text-success-foreground text-xs gap-1">
-                  <ShoppingBag size={13} /> {t("sold")}
+                <Button
+                  onClick={() => handleMarkSold(s._id)}
+                  disabled={soldLoading === s._id}
+                  className="flex-1 tap-target bg-success text-success-foreground text-sm gap-1.5"
+                >
+                  <ShoppingBag size={16} />
+                  {soldLoading === s._id ? "..." : t("sold")}
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => handleWhatsapp(s)} className="flex-1 gap-1 text-success border-success text-xs">
-                  <MessageCircle size={13} /> WhatsApp
+                <Button variant="outline" onClick={() => handleWhatsapp(s)} className="flex-1 tap-target gap-1.5 text-success border-success text-sm">
+                  <MessageCircle size={16} /> WhatsApp
                 </Button>
               </div>
             )}

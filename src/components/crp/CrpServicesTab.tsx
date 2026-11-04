@@ -1,68 +1,30 @@
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/i18n/LanguageContext";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { HAMLETS } from "@/lib/auth";
 import { formatDate } from "@/lib/mockData";
 import { api } from "@/lib/api";
+import {
+  formatVaccinationCalendarDate,
+  formatVaccinationSubmissionDate,
+  getVaccinationStockDueDate,
+} from "@/lib/vaccinationDates";
 import { toast } from "sonner";
-import { Loader2, IndianRupee, ChevronDown, ChevronUp } from "lucide-react";
+import { IndianRupee, ChevronDown, ChevronUp, Syringe, CheckCircle2 } from "lucide-react";
 import { User } from "@/lib/auth";
 
 const CrpServicesTab = ({ user }: { user: User }) => {
   const { t } = useLanguage();
-  const [farmers, setFarmers] = useState<any[]>([]);
-
-  useEffect(() => {
-    api.getFarmers().then(setFarmers).catch(() => {});
-  }, []);
-
-  const [vaxHamlet, setVaxHamlet] = useState("");
-  const [vaxSearch, setVaxSearch] = useState("");
-  const [vaxFarmer, setVaxFarmer] = useState("");
-  const [vaccineType, setVaccineType] = useState("");
-  const [vaxDate, setVaxDate] = useState(new Date().toISOString().split("T")[0]);
-  const [vaxNextDue, setVaxNextDue] = useState("");
-  const [vaxLoading, setVaxLoading] = useState(false);
-
-  const [dewHamlet, setDewHamlet] = useState("");
-  const [dewSearch, setDewSearch] = useState("");
-  const [dewFarmer, setDewFarmer] = useState("");
-  const [dewDate, setDewDate] = useState(new Date().toISOString().split("T")[0]);
-  const [dewNextDue, setDewNextDue] = useState("");
-  const [dewLoading, setDewLoading] = useState(false);
-
-  const vaxFarmers = farmers
-    .filter((f) => !vaxHamlet || f.hamlet === vaxHamlet)
-    .filter((f) => !vaxSearch || f.name.toLowerCase().includes(vaxSearch.toLowerCase()));
-  const dewFarmers = farmers
-    .filter((f) => !dewHamlet || f.hamlet === dewHamlet)
-    .filter((f) => !dewSearch || f.name.toLowerCase().includes(dewSearch.toLowerCase()));
-
-  const handleVaxSave = async () => {
-    setVaxLoading(true);
-    await api.addVaccination({ userId: vaxFarmer, type: vaccineType.toLowerCase().includes("smallpox") ? "smallpox" : "white_diarrhea", ageGroup: vaccineType, dateGiven: vaxDate, nextDueDate: vaxNextDue, status: "completed" });
-    setVaxLoading(false);
-    toast.success(t("saved") + " ✅ தடுப்பூசி பதிவு சேமிக்கப்பட்டது");
-    setVaxFarmer(""); setVaxNextDue(""); setVaxSearch("");
-  };
-
-  const handleDewSave = async () => {
-    setDewLoading(true);
-    await api.addVaccination({ userId: dewFarmer, type: "deworming", dateGiven: dewDate, nextDueDate: dewNextDue, status: "completed" });
-    setDewLoading(false);
-    toast.success(t("saved") + " ✅ குடற்புழு நீக்கம் பதிவு சேமிக்கப்பட்டது");
-    setDewFarmer(""); setDewNextDue(""); setDewSearch("");
-  };
 
   const [allDemands, setAllDemands] = useState<any[]>([]);
   const [allDiseaseReports, setAllDiseaseReports] = useState<any[]>([]);
+  const [allVaxStocks, setAllVaxStocks] = useState<any[]>([]);
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     api.getAllServiceDemands().then(setAllDemands).catch(() => {});
     api.getAllDiseaseReports().then(setAllDiseaseReports).catch(() => {});
+    api.getAllVaccinationStock().then(setAllVaxStocks).catch(() => {});
   }, [refresh]);
 
   const pendingDemands  = allDemands.filter((d) => d.status === "Pending" && ["Feed Stock", "Equipment", "Vaccination", "Deworming"].includes(d.type));
@@ -78,15 +40,28 @@ const CrpServicesTab = ({ user }: { user: User }) => {
   const [serviceOpen, setServiceOpen] = useState(true);
   const [loanOpen,    setLoanOpen]    = useState(true);
   const [diseaseOpen, setDiseaseOpen] = useState(true);
+  const [vaxStockOpen, setVaxStockOpen] = useState(true);
 
-  const officer = { id: user.userId, name: user.name };
+  const pendingVaxStocks = allVaxStocks.filter((s) => s.status !== "completed");
+  const doneVaxStocks    = allVaxStocks.filter((s) => s.status === "completed");
+  const [vaxStockTab, setVaxStockTab] = useState<"pending" | "history">("pending");
+
+  const handleCompleteVaxStock = async (id: string) => {
+    try {
+      await api.completeVaccinationStock(id);
+      setRefresh((k) => k + 1);
+      toast.success("தடுப்பூசி நிறைவு செய்யப்பட்டது ✅");
+    } catch {
+      toast.error("Failed");
+    }
+  };
 
   const handleApprove = async (id: string) => {
-    try { await api.completeServiceDemand(id, officer); setRefresh((k) => k + 1); toast.success("அனுமதிக்கப்பட்டது ✅"); }
+    try { await api.completeServiceDemand(id); setRefresh((k) => k + 1); toast.success("அனுமதிக்கப்பட்டது ✅"); }
     catch { toast.error("Failed"); }
   };
   const handleReject = async (id: string) => {
-    try { await api.rejectServiceDemand(id, officer); setRefresh((k) => k + 1); toast.success("நிராகரிக்கப்பட்டது ❌"); }
+    try { await api.rejectServiceDemand(id); setRefresh((k) => k + 1); toast.success("நிராகரிக்கப்பட்டது ❌"); }
     catch { toast.error("Failed"); }
   };
   const handleReviewDisease = async (id: string) => {
@@ -97,57 +72,134 @@ const CrpServicesTab = ({ user }: { user: User }) => {
   return (
     <div className="flex flex-col gap-5">
 
-      {/* Mark Vaccination */}
-      <Card className="p-5 bg-card">
-        <h2 className="text-lg font-bold mb-4 text-foreground">{t("markVaccination")}</h2>
-        <div className="flex flex-col gap-3">
-          <select value={vaxHamlet} onChange={(e) => setVaxHamlet(e.target.value)} className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground">
-            <option value="">{t("allHamlets")}</option>
-            {HAMLETS.map((h) => <option key={h} value={h}>{h}</option>)}
-          </select>
-          <Input value={vaxSearch} onChange={(e) => { setVaxSearch(e.target.value); setVaxFarmer(""); }} placeholder="விவசாயி பெயர் தேடுக..." className="tap-target" />
-          <select value={vaxFarmer} onChange={(e) => setVaxFarmer(e.target.value)} className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground">
-            <option value="">{t("selectFarmer")}</option>
-            {vaxFarmers.map((f) => <option key={f._id} value={f._id}>{f.name}</option>)}
-          </select>
-          <Input value={vaccineType} onChange={(e) => setVaccineType(e.target.value)} placeholder={t("vaccineType")} className="tap-target" />
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs text-muted-foreground">{t("dateGiven")}</label><Input type="date" value={vaxDate} onChange={(e) => setVaxDate(e.target.value)} /></div>
-            <div><label className="text-xs text-muted-foreground">{t("nextDueDate")}</label><Input type="date" value={vaxNextDue} onChange={(e) => setVaxNextDue(e.target.value)} /></div>
+      {/* Vaccination Stock Requests */}
+      <Card className="p-5 bg-card border-2 border-teal-200">
+        <button className="w-full flex items-center justify-between" onClick={() => setVaxStockOpen((o) => !o)}>
+          <div className="flex items-center gap-2">
+            <Syringe size={20} className="text-teal-700" />
+            <h2 className="text-lg font-bold text-foreground">{t("vaccinationStockRequests")}</h2>
           </div>
-          <Button onClick={handleVaxSave} disabled={!vaxFarmer || !vaxNextDue || vaxLoading} className="tap-target bg-primary text-primary-foreground">
-            {vaxLoading ? <Loader2 className="animate-spin" size={18} /> : t("save")}
-          </Button>
-        </div>
-      </Card>
+          {vaxStockOpen ? <ChevronUp size={18} className="text-muted-foreground shrink-0" /> : <ChevronDown size={18} className="text-muted-foreground shrink-0" />}
+        </button>
+        {vaxStockOpen && (
+          <div className="mt-3 flex flex-col gap-3">
+            <div className="flex gap-2">
+              <button onClick={() => setVaxStockTab("pending")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${vaxStockTab === "pending" ? "bg-warning text-warning-foreground border-warning" : "border-border text-muted-foreground"}`}>
+                நிலுவை ({pendingVaxStocks.length})
+              </button>
+              <button onClick={() => setVaxStockTab("history")} className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${vaxStockTab === "history" ? "bg-success text-success-foreground border-success" : "border-border text-muted-foreground"}`}>
+                முடிந்தவை ({doneVaxStocks.length})
+              </button>
+            </div>
 
-      {/* Mark Deworming */}
-      <Card className="p-5 bg-card">
-        <h2 className="text-lg font-bold mb-4 text-foreground">{t("markDeworming")}</h2>
-        <div className="flex flex-col gap-3">
-          <select value={dewHamlet} onChange={(e) => setDewHamlet(e.target.value)} className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground">
-            <option value="">{t("allHamlets")}</option>
-            {HAMLETS.map((h) => <option key={h} value={h}>{h}</option>)}
-          </select>
-          <Input value={dewSearch} onChange={(e) => { setDewSearch(e.target.value); setDewFarmer(""); }} placeholder="விவசாயி பெயர் தேடுக..." className="tap-target" />
-          <select value={dewFarmer} onChange={(e) => setDewFarmer(e.target.value)} className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground">
-            <option value="">{t("selectFarmer")}</option>
-            {dewFarmers.map((f) => <option key={f._id} value={f._id}>{f.name}</option>)}
-          </select>
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs text-muted-foreground">{t("dateGiven")}</label><Input type="date" value={dewDate} onChange={(e) => setDewDate(e.target.value)} /></div>
-            <div><label className="text-xs text-muted-foreground">{t("nextDueDate")}</label><Input type="date" value={dewNextDue} onChange={(e) => setDewNextDue(e.target.value)} /></div>
+            {vaxStockTab === "pending" && (
+              pendingVaxStocks.length === 0
+                ? <p className="text-sm text-muted-foreground">நிலுவை கோரிக்கைகள் இல்லை</p>
+                : <div className="flex flex-col gap-3">
+                    {pendingVaxStocks.map((s: any) => (
+                      <div key={s._id} className="border border-teal-200 rounded-xl p-4 bg-teal-50/40">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <p className="text-sm font-bold text-foreground">{s.userId?.name || s.farmerName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("village")}: {s.userId?.hamletId?.nameTa || s.userId?.hamletId?.name || s.userId?.hamlet || s.hamlet || "—"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t("phoneNumber")}: {s.userId?.phone || "—"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationRequestSubmitted")}: {formatVaccinationSubmissionDate(s.entryDate)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationRequestDeadline")}: {formatVaccinationCalendarDate(getVaccinationStockDueDate(s))}
+                            </p>
+                          </div>
+                          <Badge className="bg-warning text-warning-foreground shrink-0">{t("pending")}</Badge>
+                        </div>
+
+                        <div className="bg-white rounded-lg border border-teal-100 p-3 mb-3 flex flex-col gap-1.5">
+                          {s.withinMonth > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-foreground">1 மாதத்திற்குள் <span className="text-primary font-semibold">(LaSota)</span></span>
+                              <span className="font-bold text-foreground">{s.withinMonth} கோழிகள்</span>
+                            </div>
+                          )}
+                          {s.month2 > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-foreground">2 மாத வயது <span className="text-primary font-semibold">(Fowl Pox)</span></span>
+                              <span className="font-bold text-foreground">{s.month2} கோழிகள்</span>
+                            </div>
+                          )}
+                          {s.month3 > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-foreground">3 மாத வயது <span className="text-primary font-semibold">(Infectious Coryza)</span></span>
+                              <span className="font-bold text-foreground">{s.month3} கோழிகள்</span>
+                            </div>
+                          )}
+                          {s.month4Plus > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-foreground">4–7 மாதங்கள் மேல் <span className="text-primary font-semibold">(RDVK + Deworming)</span></span>
+                              <span className="font-bold text-foreground">{s.month4Plus} கோழிகள்</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <Button
+                          size="sm"
+                          onClick={() => handleCompleteVaxStock(s._id)}
+                          className="w-full bg-success text-success-foreground gap-1"
+                        >
+                          <CheckCircle2 size={15} /> {t("vaccinationAdministeredButton")} ✅
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+            )}
+
+            {vaxStockTab === "history" && (
+              doneVaxStocks.length === 0
+                ? <p className="text-sm text-muted-foreground">இன்னும் எதுவும் இல்லை</p>
+                : <div className="flex flex-col gap-3">
+                    {doneVaxStocks.map((s: any) => (
+                      <div key={s._id} className="border border-border rounded-xl p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <p className="text-sm font-bold text-foreground">{s.userId?.name || s.farmerName || "—"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("village")}: {s.userId?.hamletId?.nameTa || s.userId?.hamletId?.name || s.userId?.hamlet || s.hamlet || "—"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">{t("phoneNumber")}: {s.userId?.phone || "—"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationRequestSubmitted")}: {formatVaccinationSubmissionDate(s.entryDate)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationRequestDeadline")}: {formatVaccinationCalendarDate(getVaccinationStockDueDate(s))}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationCompletedAt")}: {formatVaccinationSubmissionDate(s.completedAt)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("vaccinationCompletedBy")}: {s.completedBy || "—"}
+                            </p>
+                          </div>
+                          <Badge className="bg-success text-success-foreground shrink-0">{t("completed")}</Badge>
+                        </div>
+                        <div className="bg-muted/30 rounded-lg p-3 flex flex-col gap-1">
+                          {s.withinMonth > 0 && <p className="text-xs text-foreground">1 மாதத்திற்குள் (LaSota): <span className="font-bold">{s.withinMonth}</span></p>}
+                          {s.month2 > 0 && <p className="text-xs text-foreground">2 மாத வயது (Fowl Pox): <span className="font-bold">{s.month2}</span></p>}
+                          {s.month3 > 0 && <p className="text-xs text-foreground">3 மாத வயது (Infectious Coryza): <span className="font-bold">{s.month3}</span></p>}
+                          {s.month4Plus > 0 && <p className="text-xs text-foreground">4–7 மாதங்கள் மேல் (RDVK + Deworming): <span className="font-bold">{s.month4Plus}</span></p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+            )}
           </div>
-          <Button onClick={handleDewSave} disabled={!dewFarmer || !dewNextDue || dewLoading} className="tap-target bg-primary text-primary-foreground">
-            {dewLoading ? <Loader2 className="animate-spin" size={18} /> : t("save")}
-          </Button>
-        </div>
+        )}
       </Card>
 
       {/* Service Demands */}
       <Card className="p-5 bg-card">
         <button className="w-full flex items-center justify-between" onClick={() => setServiceOpen((o) => !o)}>
-          <h2 className="text-lg font-bold text-foreground">விவசாயி கோரிக்கைகள் (Feed / Equipment / Vaccination)</h2>
+          <h2 className="text-lg font-bold text-foreground">விவசாயி கோரிக்கைகள் (Feed / Equipment)</h2>
           {serviceOpen ? <ChevronUp size={18} className="text-muted-foreground shrink-0" /> : <ChevronDown size={18} className="text-muted-foreground shrink-0" />}
         </button>
         {serviceOpen && (
@@ -172,6 +224,7 @@ const CrpServicesTab = ({ user }: { user: User }) => {
                       </div>
                       <Badge className="bg-warning text-warning-foreground">{d.type}</Badge>
                     </div>
+                    {d.option && <p className="text-xs font-semibold text-primary mb-0.5">{d.option}</p>}
                     <p className="text-xs text-muted-foreground mb-3">Qty: {d.quantity}{d.notes ? ` • ${d.notes}` : ""}</p>
                     <div className="flex gap-2">
                       <Button size="sm" onClick={() => handleApprove(d._id)} className="flex-1 bg-success text-success-foreground text-xs">✅ அனுமதி</Button>
@@ -195,6 +248,7 @@ const CrpServicesTab = ({ user }: { user: User }) => {
                         {d.status === "Completed" ? "✅ அனுமதி" : "❌ நிராகரிக்கப்பட்டது"}
                       </Badge>
                     </div>
+                    {d.option && <p className="text-xs font-semibold text-primary mb-0.5">{d.option}</p>}
                     <p className="text-xs text-muted-foreground">Qty: {d.quantity}{d.notes ? ` • ${d.notes}` : ""}</p>
                     {d.actionBy && <p className="text-xs text-muted-foreground mt-0.5">செயல்: {d.actionBy}</p>}
                   </div>
@@ -305,7 +359,7 @@ const CrpServicesTab = ({ user }: { user: User }) => {
                     </div>
                     <p className="text-sm text-foreground mb-3">{r.description}</p>
                     <Button size="sm" onClick={() => handleReviewDisease(r._id)} className="w-full bg-success text-success-foreground text-xs">
-                      ✅ பரிசீலிக்கப்பட்டததாக குறி
+                      ✅ பரிசீலிக்கப்பட்டது
                     </Button>
                   </div>
                 ))}

@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDate } from "@/lib/mockData";
 import { TextToSpeech } from "@capacitor-community/text-to-speech";
-import { Bell, AlertTriangle, TrendingUp, Lightbulb, Volume2, VolumeX, Square, Syringe, CheckCircle2 } from "lucide-react";
+import { Bell, AlertTriangle, TrendingUp, Lightbulb, Volume2, VolumeX, Square, Syringe, CheckCircle2, Megaphone } from "lucide-react";
 import { User } from "@/lib/auth";
 
 const useSpeech = () => {
@@ -50,7 +50,7 @@ const useSpeech = () => {
 
   const speakNative = async (id: string, text: string) => {
     try {
-      await TextToSpeech.speak({ text, locale: "ta-IN", rate: 1.0 });
+      await TextToSpeech.speak({ text, lang: "ta-IN", rate: 1.0 });
       setSpeakingId(id);
     } catch (error) {
       console.warn("Native TTS failed, falling back to web TTS", error);
@@ -113,7 +113,7 @@ const NotificationsTab = ({ user }: { user: User }) => {
     market:                  { label: t("marketPrice"),        className: "bg-success text-success-foreground", icon: TrendingUp,    iconColor: "text-success",      bg: "bg-success/8" },
     tip:                     { label: t("farmingTip"),         className: "bg-primary text-primary-foreground", icon: Lightbulb,     iconColor: "text-primary",      bg: "bg-primary/8" },
     vaccination_reminder:    { label: lang === "ta" ? "தடுப்பூசி நினைவூட்டல்" : "Vaccination Reminder", className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
-    vaccination_stock_reminder: { label: lang === "ta" ? "தடுப்பூசி இருப்பு நினைவூட்டல்" : "Vaccination Stock Reminder", className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
+    vaccination_stock_reminder: { label: lang === "ta" ? "கோழிகளுக்கான தடுப்பூசி தேவை நினைவூட்டல்" : "Vaccination Requirement Reminder", className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
     r2b_reminder:            { label: "R2B Reminder",           className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
     deworming_reminder:      { label: "Deworming Reminder",      className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
     booster_reminder:        { label: "Booster Reminder",        className: "bg-warning text-warning-foreground", icon: Syringe, iconColor: "text-warning", bg: "bg-warning/8" },
@@ -131,6 +131,7 @@ const NotificationsTab = ({ user }: { user: User }) => {
     loan_rejected:           { label: "Loan Rejected",           className: "bg-danger text-danger-foreground", icon: AlertTriangle, iconColor: "text-danger", bg: "bg-danger/8" },
     loan_due_reminder:       { label: "Loan Due Reminder",       className: "bg-warning text-warning-foreground", icon: Bell, iconColor: "text-warning", bg: "bg-warning/8" },
     loan_disbursed:          { label: "Loan Disbursed",          className: "bg-success text-success-foreground", icon: TrendingUp, iconColor: "text-success", bg: "bg-success/8" },
+    admin_announcement:      { label: t("announcementLabel"),    className: "bg-primary text-primary-foreground", icon: Megaphone, iconColor: "text-primary", bg: "bg-primary/8" },
   };
 
   if (isLoading) {
@@ -214,7 +215,13 @@ const NotificationsTab = ({ user }: { user: User }) => {
                   <Badge className={`${config.className} text-xs`}>{config.label}</Badge>
                   <span className="text-xs text-muted-foreground shrink-0">{formatDate(n.createdAt)}</span>
                 </div>
-                <p className="text-sm text-foreground leading-relaxed">{n.message}</p>
+                <div className="text-sm text-foreground leading-relaxed flex flex-col gap-1">
+                  {n.message.split("\n").map((line: string, i: number) =>
+                    line.trim() === "" ? null : (
+                      <span key={i} className="block break-words">{line}</span>
+                    )
+                  )}
+                </div>
                 <button
                   onClick={() => speak(n._id, n.message)}
                   className={`mt-2.5 flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition-all ${

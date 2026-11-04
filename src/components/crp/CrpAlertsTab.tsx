@@ -4,11 +4,12 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { HAMLETS } from "@/lib/auth";
 import { User } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2, MessageCircle, X } from "lucide-react";
+import { useHamlets, hamletDisplayName } from "@/hooks/use-hamlets";
+import type { Hamlet } from "@/lib/api";
 
 type TargetMode = "all" | "hamlet" | "shg";
 
@@ -87,11 +88,13 @@ const TargetSelector = ({
   hamlet, setHamlet,
   selectedShgs, setSelectedShgs,
   shgList,
+  hamlets, hamletsLoading, lang,
 }: {
   mode: TargetMode; setMode: (m: TargetMode) => void;
   hamlet: string; setHamlet: (h: string) => void;
   selectedShgs: string[]; setSelectedShgs: (s: string[]) => void;
   shgList: string[];
+  hamlets: Hamlet[]; hamletsLoading: boolean; lang: string;
 }) => (
   <div className="flex flex-col gap-2">
     <div className="flex rounded-lg overflow-hidden border border-border">
@@ -112,10 +115,19 @@ const TargetSelector = ({
       <select
         value={hamlet}
         onChange={(e) => setHamlet(e.target.value)}
-        className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground"
+        disabled={hamletsLoading}
+        className="border border-input rounded-md px-3 py-2.5 text-sm bg-card text-foreground disabled:opacity-60"
       >
-        <option value="">ஊரை தேர்ந்தெடுக்கவும்</option>
-        {HAMLETS.map((h) => <option key={h} value={h}>{h}</option>)}
+        <option value="">{hamletsLoading ? "ஏற்றுகிறது..." : "ஊரை தேர்ந்தெடுக்கவும்"}</option>
+        {!hamletsLoading && hamlets.length === 0 && (
+          <option value="" disabled>ஊர்கள் இல்லை</option>
+        )}
+        {hamlets.map((h) => {
+          const label = hamletDisplayName(h, lang);
+          // Farmers' stored `hamlet` text is the Tamil name (nameTa || name), which is
+          // what notification targeting matches on — send that regardless of UI language.
+          return <option key={h._id} value={h.nameTa || h.name}>{label}</option>;
+        })}
       </select>
     )}
 
@@ -130,9 +142,9 @@ const TargetSelector = ({
 );
 
 const CrpAlertsTab = ({ user }: { user: User }) => {
-  const { t } = useLanguage();
-  const officer = { id: user.userId, name: user.name };
+  const { t, lang } = useLanguage();
   const [shgList, setShgList] = useState<string[]>([]);
+  const { hamlets, hamletsLoading } = useHamlets();
 
   useEffect(() => {
     api.getShgGroups().then((data: any[]) => setShgList(data.map((g) => g.name))).catch(() => {});
@@ -175,10 +187,15 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
     if (alertMode === "hamlet" && !alertHamlet)       { toast.error("ஊரை தேர்ந்தெடுக்கவும்"); return; }
     if (alertMode === "shg" && alertShgs.length === 0) { toast.error("குறைந்தது ஒரு SHG குழுவை தேர்ந்தெடுக்கவும்"); return; }
     setAlertLoading(true);
-    await api.createNotification({ type: "disease", message: alertMsg, ...getTarget(alertMode, alertHamlet, alertShgs) }, officer);
-    setAlertLoading(false);
-    toast.success(t("alertSent") + " ✅");
-    setAlertMsg("");
+    try {
+      await api.createNotification({ type: "disease", message: alertMsg, ...getTarget(alertMode, alertHamlet, alertShgs) });
+      toast.success(t("alertSent") + " ✅");
+      setAlertMsg("");
+    } catch (err) {
+      toast.error((err as { message?: string })?.message || "Failed to send");
+    } finally {
+      setAlertLoading(false);
+    }
   };
 
   const handleSendTip = async () => {
@@ -186,26 +203,41 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
     if (tipMode === "hamlet" && !tipHamlet)         { toast.error("ஊரை தேர்ந்தெடுக்கவும்"); return; }
     if (tipMode === "shg" && tipShgs.length === 0)  { toast.error("குறைந்தது ஒரு SHG குழுவை தேர்ந்தெடுக்கவும்"); return; }
     setTipLoading(true);
-    await api.createNotification({ type: "tip", message: tipMsg, ...getTarget(tipMode, tipHamlet, tipShgs) }, officer);
-    setTipLoading(false);
-    toast.success(t("tipSent") + " ✅");
-    setTipMsg("");
+    try {
+      await api.createNotification({ type: "tip", message: tipMsg, ...getTarget(tipMode, tipHamlet, tipShgs) });
+      toast.success(t("tipSent") + " ✅");
+      setTipMsg("");
+    } catch (err) {
+      toast.error((err as { message?: string })?.message || "Failed to send");
+    } finally {
+      setTipLoading(false);
+    }
   };
 
   const handleSendPrice = async () => {
     if (!broilerPrice && !chickPrice && !eggPrice) return;
+    // The backend (POST /market) requires all three prices.
+    if (!Number(broilerPrice) || !Number(chickPrice) || !Number(eggPrice)) {
+      toast.error(lang === "ta" ? "மூன்று விலைகளையும் உள்ளிடவும்" : "Please enter all three prices");
+      return;
+    }
     if (priceMode === "hamlet" && !priceHamlet)          { toast.error("ஊரை தேர்ந்தெடுக்கவும்"); return; }
     if (priceMode === "shg" && priceShgs.length === 0)   { toast.error("குறைந்தது ஒரு SHG குழுவை தேர்ந்தெடுக்கவும்"); return; }
     setPriceLoading(true);
-    await api.setMarketPrice({ broiler: Number(broilerPrice) || 0, chick: Number(chickPrice) || 0, egg: Number(eggPrice) || 0 }, officer);
-    await api.createNotification({
-      type: "market",
-      message: `சந்தை விலை புதுப்பிப்பு: கறிக்கோழி ₹${broilerPrice}/kg | குஞ்சு ₹${chickPrice}/குஞ்சு | முட்டை ₹${eggPrice}/முட்டை (தேதி: ${priceDate})`,
-      ...getTarget(priceMode, priceHamlet, priceShgs),
-    }, officer);
-    setPriceLoading(false);
-    toast.success(t("priceSent") + " ✅");
-    setBroilerPrice(""); setChickPrice(""); setEggPrice("");
+    try {
+      await api.setMarketPrice({ broiler: Number(broilerPrice) || 0, chick: Number(chickPrice) || 0, egg: Number(eggPrice) || 0 });
+      await api.createNotification({
+        type: "market",
+        message: `சந்தை விலை புதுப்பிப்பு: நாட்டுக்கோழி ₹${broilerPrice}/kg | நாட்டுக்கோழி குஞ்சுகள் ₹${chickPrice}/குஞ்சு | நாட்டுக்கோழி முட்டை ₹${eggPrice}/முட்டை (தேதி: ${priceDate})`,
+        ...getTarget(priceMode, priceHamlet, priceShgs),
+      });
+      toast.success(t("priceSent") + " ✅");
+      setBroilerPrice(""); setChickPrice(""); setEggPrice("");
+    } catch (err) {
+      toast.error((err as { message?: string })?.message || "Failed to update price");
+    } finally {
+      setPriceLoading(false);
+    }
   };
 
   return (
@@ -220,6 +252,7 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
             hamlet={alertHamlet} setHamlet={setAlertHamlet}
             selectedShgs={alertShgs} setSelectedShgs={setAlertShgs}
             shgList={shgList}
+            hamlets={hamlets} hamletsLoading={hamletsLoading} lang={lang}
           />
           <Textarea value={alertMsg} onChange={(e) => setAlertMsg(e.target.value)} placeholder={t("message")} rows={3} className="text-base" />
           <Button onClick={handleSendAlert} disabled={!alertMsg.trim() || alertLoading} className="tap-target w-full bg-danger text-danger-foreground">
@@ -233,13 +266,14 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
 
       {/* Farming Tip */}
       <Card className="p-5 bg-card">
-        <h2 className="text-lg font-bold mb-4 text-foreground">{t("sendFarmingTip")}</h2>
+        <h2 className="text-lg font-bold mb-4 text-foreground">{t("poultryFarmingInfoTitle")}</h2>
         <div className="flex flex-col gap-3">
           <TargetSelector
             mode={tipMode} setMode={setTipMode}
             hamlet={tipHamlet} setHamlet={setTipHamlet}
             selectedShgs={tipShgs} setSelectedShgs={setTipShgs}
             shgList={shgList}
+            hamlets={hamlets} hamletsLoading={hamletsLoading} lang={lang}
           />
           <Textarea value={tipMsg} onChange={(e) => setTipMsg(e.target.value)} placeholder={t("message")} rows={3} className="text-base" />
           <Button onClick={handleSendTip} disabled={!tipMsg.trim() || tipLoading} className="tap-target w-full bg-primary text-primary-foreground">
@@ -253,24 +287,25 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
 
       {/* Market Price */}
       <Card className="p-5 bg-card">
-        <h2 className="text-lg font-bold mb-4 text-foreground">{t("sendMarketPrice")}</h2>
+        <h2 className="text-lg font-bold mb-4 text-foreground">{t("marketPriceDetailsTitle")}</h2>
         <div className="flex flex-col gap-3">
           <TargetSelector
             mode={priceMode} setMode={setPriceMode}
             hamlet={priceHamlet} setHamlet={setPriceHamlet}
             selectedShgs={priceShgs} setSelectedShgs={setPriceShgs}
             shgList={shgList}
+            hamlets={hamlets} hamletsLoading={hamletsLoading} lang={lang}
           />
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">கறிக்கோழி (Broiler) ₹/kg</label>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("countryBroilerChicken")} (₹/kg)</label>
             <Input value={broilerPrice} onChange={(e) => setBroilerPrice(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="180" className="tap-target" />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">குஞ்சு (Chick) ₹/குஞ்சு</label>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("countryChickenChicks")} (₹{t("chickUnit")})</label>
             <Input value={chickPrice} onChange={(e) => setChickPrice(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="45" className="tap-target" />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">முட்டை (Egg) ₹/முட்டை</label>
+            <label className="text-xs text-muted-foreground mb-1 block">{t("countryChickenEggs")} (₹{t("eggUnit")})</label>
             <Input value={eggPrice} onChange={(e) => setEggPrice(e.target.value.replace(/[^0-9.]/g, ""))} inputMode="decimal" placeholder="6.50" className="tap-target" />
           </div>
           <Input type="date" value={priceDate} onChange={(e) => setPriceDate(e.target.value)} />
@@ -278,7 +313,7 @@ const CrpAlertsTab = ({ user }: { user: User }) => {
             {priceLoading ? <Loader2 className="animate-spin" size={18} /> : t("sendMarketPrice")}
           </Button>
           <Button
-            onClick={() => whatsapp(`📊 சந்தை விலை: கறிக்கோழி ₹${broilerPrice}/kg | குஞ்சு ₹${chickPrice}/குஞ்சு | முட்டை ₹${eggPrice}/முட்டை (${priceDate})`)}
+            onClick={() => whatsapp(`📊 சந்தை விலை: நாட்டுக்கோழி ₹${broilerPrice}/kg | நாட்டுக்கோழி குஞ்சுகள் ₹${chickPrice}/குஞ்சு | நாட்டுக்கோழி முட்டை ₹${eggPrice}/முட்டை (${priceDate})`)}
             disabled={!broilerPrice && !chickPrice && !eggPrice}
             variant="outline" className="tap-target gap-2 text-success border-success"
           >

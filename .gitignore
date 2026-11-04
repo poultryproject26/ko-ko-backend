@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+
+# Secrets / local-only config (never commit)
+.env
+android/app/google-services.json
+
+# Leftover nested git clones from earlier work (not part of the app)
+temp-*/
